@@ -1,0 +1,7 @@
+interface:
+  display_name: "Standard Report PPT"
+  short_description: "Direct-Blueprint editable consulting decks"
+  brand_color: "#2F5597"
+default_prompt: "Use $standard-report-ppt; confirm only the exact page count and mode, initialize the V5.7 manifest pipeline, build an analytical canvas with bounded icon-lane accents, compile UTF-8 page specs, run one render/audit pass, visually inspect, then package and verify delivery without repeating audits."
+policy:
+  allow_implicit_invocation: true
