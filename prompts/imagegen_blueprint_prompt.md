@@ -1,71 +1,68 @@
-# Per-page complete ImageGen blueprint prompt V5.7
+# Per-page ImageGen design-draft prompt V5.9
 
-## Preconditions
+For V5.9, use the real first slide as the only ImageGen capability probe.
+Do not generate a circle or other throwaway image. Import every returned
+artifact through `v59_blueprint_gate.py`, then lock it before platform
+selection. Missing or stale blueprints stop both builders. The built-in
+ImageGen tool is the default; CLI/API fallback requires explicit user approval
+and a locally configured `OPENAI_API_KEY`.
 
-- The user confirmed `production_mode: blueprint`.
-- `project_brief.json` has an exact final page count and `blueprint_engine: direct`.
-- The canonical `SLIDES` content is complete.
-- The visual system and layout rules have been read.
+V5.9 retains the V5.8.3 one-success ImageGen visual contract; V5.8.4 changes
+only the post-blueprint alignment and reconstruction path.
 
-Use one ImageGen generation per final slide by default. Generate one separate 16:9 **完整页面**视觉稿, not a body-only image and not a page with a blank reserved top. Never combine pages. The draft must visibly include the approximate 章节标题、本页标题、核心判断, body, source, and page number so it can be reviewed as a complete PPT page. Exact fonts, wrapping, and vertical positions are only visual references at this stage; `compose_blueprint.py` replaces the top skeleton and footer deterministically before acceptance. Only that composed output may be called a blueprint, shown to the user, saved as `blueprints/SNN.png`, or hashed.
+Use this prompt only after the page count, blueprint mode, canonical content, visual route, and evidence inventory are complete.
 
-## Fixed five-layer skeleton
+## One-success contract
 
-1. Chapter title: Microsoft YaHei, bold, 20 pt, navy or black.
-2. Page title: Microsoft YaHei, bold, 16 pt, left-aligned white text in a navy bar.
-3. Core judgment: Microsoft YaHei, 12 pt, black text in a white box with a black 1 pt short-dash border.
-4. Body: charts, tables, cards, flows, comparisons, or maps using 8–12 pt text.
-5. Source and page number: 7–8 pt dark gray, with no separator line above the source.
+Before the call, create a non-blocking `visual_plan`. Request one successful ImageGen result per final slide. Save the immutable result as `.build/design_drafts/SNN.png`, copy it byte-for-byte to `blueprints/SNN.png`, and record `imagegen_attempt_count: 1`. `transport_attempt_count` starts at 1 and may reach 2 only when a network, timeout, or empty-response failure produced no image; this is the only transport retry. Once any image exists, lock it; text or visual-quality differences never trigger regeneration.
 
-Chapter text, page-title text, and the core bullet symbols should share one approximate left edge in the ImageGen draft. The page title is never centered. No decorative line appears above the chapter. The core contains **one or two** square-bullet points totaling **80–160** characters and has no label, tab, badge, or blue block reading “核心判断”. Do not leave the top three layers blank. `compose_blueprint.py` later enforces their exact 0.4 cm, 1.5 cm, and 2.7 cm top positions.
+The locked image is both the immutable design draft and the formal blueprint benchmark.
 
-## Body composition
+Generate one separate 16:9 完整页面 using the canonical text supplied from `.build/slides.json` and `.build/page_specs.json`: 章节标题, 本页标题, 核心判断, body, source, and page number. Never combine pages. `compose_blueprint.py` may record skeleton/body ROI metadata but must not replace or repaint the formal ImageGen blueprint.
 
-Use a reference-style **analytical canvas** with medium density and one clear primary visual focus. Arrange two or three large aligned evidence regions. Build the body mainly from editable charts, tables, matrices, flows, metric strips, and concise analytical cards. Use white space and consistent baselines; the page should read like a consulting report, not an image poster.
+## Visual-first planning order
 
-Inputs:
+1. State the conclusion and strongest evidence.
+2. Select the most truthful primary expression, independent of Python implementation convenience.
+3. Plan supporting icons, people, devices, products, maps, illustrations, or decorative motifs that improve comprehension.
+4. Only then consider how Python may rebuild or approximate the page.
+5. Check evidence coverage and readability last.
 
-- page purpose: `{{page_type}}`
-- conclusion: `{{title}}`
-- canonical core: `{{core_points}}`
-- module titles, roles, and final content: `{{canonical_modules_without_internal_ids}}`
-- quantitative evidence: `{{quantitative_evidence}}`
-- source: `{{source}}`
-- reviewed visual manifest subjects: `{{complex_visuals}}`
-- intended subject inventory: `{{visual_inventory}}`
+## Expression routing
 
-Never show internal IDs such as `S01`, `M01`, or group identifiers. Do not automatically number modules or parallel cards. Use visible numbers only when the content is a genuine sequence, stage, rank, or ordered method.
+Use an analytical canvas with adaptive density near 70% of the approved dense reference. Do not force a fixed number of regions, card grids, matrices, or flow boxes.
 
-Borrow from reference images only their structure, text density, and chart placement. Do not inherit reference colors, fonts, logos, brand style, decorative language, or copy.
+- `time_series`: line for continuity, column for a few discrete snapshots, or combo only when a second comparable series exists.
+- `category_comparison`: horizontal bar, grouped bar, or column chart.
+- `composition`: donut composition.
+- `multi_metric_comparison`: grouped bars.
+- technical structure, material composition, or equipment principle: annotated structure diagram or subject illustration.
+- industry chain or upstream/downstream relation: chain with meaningful visual nodes.
+- object differences: image-text comparison.
+- `lookup`: matrix when exact values matter.
+- `process`: editable flow structure only for real steps.
+- `qualitative/parallel`: peer modules without fake numbering or arrows.
+- `qualitative/narrative`: concise prose with a visual anchor.
+- `qualitative/causal`: a flow only when evidence contains a real cause-effect relationship.
 
-Use white, navy `#1E386B`, blue `#7399C5`, approved gray, black, and pale blue/gray tints. Dark red `#C00000` is limited to key numbers and very small data marks. Do not use a red header, large red card, red section fill, or red background region.
+Let the evidence select the form. Charts prove comparable facts; annotated structures explain technology; visual chains explain relationships; comparisons expose differences; matrices serve exact lookup; flows serve only real steps or causes.
 
-Do not draw a color palette, RGB value swatches, theme reference blocks, design annotations, or pasteboard objects on the left side or anywhere else in the blueprint.
+## Visual assets
 
-Charts prove facts; nearby text explains the meaning. Before ImageGen, enumerate every intended visual subject. After deterministic composition, write `.build/visual_manifest.json` and bind it to the accepted SHA-256. Photos, logos, maps, pictograms, compound marks, decorative motifs, chemical structures, devices, products, and characters always use `crop`; native rebuild is limited to allowlisted primitives with a concrete recipe. Record `candidate_count`; a positive count can never yield zero crops. Place each crop candidate on its own clean background. Three icons require three subjects, asset IDs, rectangles, PNGs, and insertion calls.
+Use relevant supporting subjects without a numeric quota. A normal analytical page may contain no raster subject, while a technical or comparison page may justify several. Never fabricate an official logo.
 
-Keep charts, tables, matrices, and flows as the primary evidence-bearing body. Metric strips and concise cards support them. Use small pictograms, supplied logos, flags, or bounded schematic accents only as supporting accents. Optional supporting accents occupy **6-12% of the body area** in total. Put each accent in a **reserved icon lane** beside a heading, regional label, or metric block. The reserved icon lane is separate from body copy and chart labels. Use blue line-art or flat two-tone accents with simple silhouettes; use one accent only when it clarifies a real concept. A normal analytical page may have no raster subject. Use a large photo, map, device, or product only when it is primary evidence, such as product anatomy or geographic strategy. Never fabricate an official logo. After composition, declare, crop, inspect, and insert each non-native accent independently with aspect-preserving contain fit.
+After generation, inspect the entire page and record `visual_reviewed`, `observed_candidate_count`, `candidate_count`, `visual_inventory`, and `complex_visuals` when practical. These fields are diagnostics. Prefer one crop per independent photo, logo, map, pictogram, product, device, person, character, or decorative motif. Count differences and crop omissions become warnings; use native rebuild, simplified approximation, or omission when a crop is unusable.
 
-Avoid poster, dashboard, magazine, launch-event, glass, neon, gradient, 3D, glow, heavy-shadow, and full-slide-image styles.
+## Color and style
 
-## One-shot acceptance gate
+Use a blue-gray system: `#1E386B` only for the top hierarchy, structural anchors, and strongest data series. Use neutral gray surfaces derived from `#EDEDED` alongside secondary blues; the body must not look entirely blue. Red `#C00000` is only for key numbers or very small highlighted data marks.
 
-Accept the first output when:
+Avoid poster, dashboard, magazine, launch-event, glass, neon, gradient, 3D, glow, and heavy-shadow styles. Do not draw palette swatches, RGB labels, or pasteboard design notes.
 
-- the page is readable and contains one page only;
-- all required canonical content regions are present;
-- 章节标题、本页标题、核心判断三层均可见，页面不是正文残片；
-- the body has a coherent primary focus and medium density;
-- every non-native subject is in `visual_inventory`; every crop disposition is mirrored exactly in `complex_visuals` and can be cropped one object at a time without labels, rules, or neighboring objects;
-- red fill is restrained;
-- no palette swatches, RGB labels, or design-reference blocks are visible;
-- native shapes plus bounded crops can reproduce the page.
+## Acceptance and release
 
-The fixed top skeleton is corrected deterministically after ImageGen, so do not regenerate for recoverable font or vertical-position differences. Retry the affected page once only for generation failure, unreadable output, multi-page output, missing top layer, missing required content, or unusable body composition; record it as `catastrophic_retry`. After a second catastrophic failure, ask whether to change modes or stop.
+Release almost every produced full-page blueprint. Block only when the file is missing/unreadable, its aspect ratio is outside 1.50-2.05, full-page effective content is below 0.5%, or body-region effective content is below 0.25%. Text, number, punctuation, extra numbering, density, palette, visual-count, crop, and structural-fidelity differences are warnings. Python owns canonical PPT text and final formatting.
 
-## Provenance and state
+## V5.7 compatibility
 
-- Save the raw complete-slide ImageGen draft under `.build/raw_blueprints/SNN.png`; it is internal and must never be shown or delivered as the blueprint. Run `compose_blueprint.py` and save/show only its output as `blueprints/SNN.png`.
-- Record the real SHA-256 and ImageGen generation record.
-- Set the page state to `blueprint_saved` only after the file and hash exist.
-- The next required action is writing that page’s `build_slide_SNN` function in the one whole-deck generator.
+For schema 5.7 only, retain the historical analytical canvas wording: Keep charts, tables, matrices, and flows as the primary evidence-bearing body. Use small pictograms, supplied logos, flags, or bounded schematic accents inside the 6-12% of the body area band and a reserved icon lane. This rule does not apply to V5.8.

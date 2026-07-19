@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "5.7"
+SCHEMA_VERSION = "5.8"
 LABELS = {
     "global": "全球竞争格局",
     "localization": "国产化进展",
@@ -14,6 +14,65 @@ LABELS = {
     "shenzhen": "深圳基础",
     "action": "建议行动",
 }
+
+ROUTED_CHART_TYPES = {
+    "time_series": "line_chart",
+    "category_comparison": "hbar_chart",
+    "composition": "donut_chart",
+    "multi_metric_comparison": "grouped_hbar_chart",
+}
+
+
+def _visual_route_spec(slide: dict) -> dict | None:
+    route = slide.get("visual_route")
+    if not isinstance(route, dict):
+        return None
+    data_kind = route.get("data_kind")
+    if data_kind == "process" or (
+        data_kind == "qualitative" and route.get("qualitative_form") == "causal"
+    ):
+        raw_steps = route.get("steps") or slide.get("modules", [])
+        steps = [
+            {
+                "title": str(step.get("title", step.get("name", ""))),
+                "body": str(step.get("body", step.get("detail", step.get("content", "")))),
+            }
+            for step in raw_steps
+            if isinstance(step, dict)
+        ]
+        if 2 <= len(steps) <= 6:
+            return {
+                "elements": [
+                    {
+                        "type": "flow",
+                        "role": "primary_evidence",
+                        "box": [0.0, 0.20, 12.20, 3.65],
+                        "steps": steps,
+                    }
+                ]
+            }
+    chart_type = ROUTED_CHART_TYPES.get(route.get("data_kind"))
+    data = route.get("data")
+    if chart_type is None or not isinstance(data, list) or not data:
+        return None
+    modules = slide.get("modules", [])
+    supporting = modules[0] if modules and isinstance(modules[0], dict) else {}
+    return {
+        "elements": [
+            {
+                "type": chart_type,
+                "role": "primary_evidence",
+                "box": [0.0, 0.04, 8.10, 3.90],
+                "data": data,
+            },
+            {
+                "type": "text_card",
+                "box": [8.35, 0.04, 3.85, 3.90],
+                "title": supporting.get("title", "关键解读"),
+                "body": supporting.get("detail") or supporting.get("content", ""),
+            },
+        ]
+    }
 
 
 def _technology_spec(slide: dict) -> dict:
@@ -103,6 +162,10 @@ def build_page_specs(slides: list[dict]) -> dict[str, dict]:
     specs: dict[str, dict] = {}
     for slide in slides:
         slide_id = slide["slide_id"]
+        routed = _visual_route_spec(slide)
+        if routed is not None:
+            specs[slide_id] = routed
+            continue
         page_type = slide.get("page_type")
         if page_type == "technology_overview":
             specs[slide_id] = _technology_spec(slide)
@@ -126,7 +189,7 @@ def build_page_specs(slides: list[dict]) -> dict[str, dict]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build deterministic V5.7 fast-mode page specifications.")
+    parser = argparse.ArgumentParser(description="Build deterministic V5.8 fast-mode page specifications.")
     parser.add_argument("slides", type=Path)
     parser.add_argument("output", type=Path)
     args = parser.parse_args()

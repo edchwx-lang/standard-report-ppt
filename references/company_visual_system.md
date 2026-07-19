@@ -1,74 +1,34 @@
-# Company visual system V5.5
+# Company visual system V5.8.3
 
-## Character
+Use a formal Chinese consulting style with white space, blue-gray hierarchy, editable evidence visuals, and restrained red data emphasis.
 
-- Formal Chinese policy, industry-research, and consulting presentation.
-- White background with restrained blue-gray structure and dark-red data emphasis.
-- Medium density: evidence-rich, readable at normal zoom, and free of miniature dashboard grids.
-- Reference pages contribute structure, information density, and chart placement only. They never transfer brand identity, fonts, colors, logos, or decorative style.
-
-## Fixed palette
+## Palette
 
 | Role | HEX | Use |
 |---|---|---|
-| Navy | `#1E386B` | Chapter/page hierarchy, primary series, major borders |
-| Blue | `#7399C5` | Secondary series, module headers, selected columns |
-| Neutral gray | `#A6A6A6` | Secondary data and labels |
-| Light gray | `#D9D9D9` | Dividers, table rules, neutral fills |
-| Dark red | `#C00000` | Key figures, deltas, and risk marks only |
-| White/black | `#FFFFFF` / `#000000` | Background and text |
+| Core navy | `#1E386B` | Page-title bar, structural anchors, strongest series |
+| Secondary blue | `#3F628F` | Body headers and secondary structure |
+| Mid blue | `#7391B3` | Chart series and selected comparison blocks |
+| Blue gray | `#9DB4CC` | Supporting series, dividers, quiet modules |
+| Neutral gray anchor | `#EDEDED` | Supporting surfaces and alternating rows |
+| Neutral gray derivatives | `#F5F5F5`, `#D9D9D9`, `#B7B7B7`, `#7F7F7F` | Quiet hierarchy, dividers, labels, secondary blocks |
+| Dark red | `#C00000` | Key numbers, deltas, and small highlighted data marks only |
+| Text/background | `#303A46`, `#FFFFFF`, `#000000` | Body text and neutral surfaces |
 
-Do not introduce purple, green, orange, neon, or another main hue. Dark red is never a title fill, card fill, section fill, or large background region.
+Do not use `#1E386B` as a universal body fill. Navy body fill stays within 20%; neutral-gray support occupies 8-35% of the body. Red is never a normal title, card, section, process, matrix, or background color.
 
 ## Typography
 
-Use Microsoft YaHei for Chinese, English, numbers, chart labels, and citations.
+Use Microsoft YaHei throughout. Chapter/title/core are 20/16/12 pt. Body and chart labels are 8-12 pt; sources are 7-8 pt. Do not shrink below 8 pt to force excess content.
 
-| Level | Size | Weight | Treatment |
-|---|---:|---|---|
-| Chapter title | 20 pt | Bold | Navy or black |
-| Page title | 16 pt | Bold | White in navy bar |
-| Core judgment | 12 pt | Regular with selective bold | Black |
-| Module title | 10–12 pt | Bold | Navy or white on approved blue |
-| Body | 8–12 pt | Regular | Black/dark gray |
-| Chart label | 8–9 pt | Regular | Black/gray/navy |
-| Source | 7–8 pt | Regular | Dark gray |
-| Key number | 10–14 pt | Bold | Dark red |
+Core judgment preferably uses one or two square-bullet points totaling roughly 80-160 non-whitespace characters, 1.2 line spacing, and 0 pt after the final paragraph. Length deviations are warnings. Narrative body bullets may use a 0.64 cm hanging indent; tables, labels, chart annotations, and narrow cards remain left-aligned.
 
-## Deterministic five-layer skeleton
+## Skeleton and template
 
-1. Chapter title.
-2. Navy page-title bar.
-3. Adaptive core-judgment box.
-4. Main analytical body.
-5. Source and page number.
+Use the five-layer chapter/title/core/body/footer structure and `assets/company_template.pptx` as the only master authority. Do not add top rules, footer separators, masking rectangles, palette swatches, or pasteboard objects. PowerPoint editor guides are not part of the visual contract.
 
-Chapter text, page-title text, and the first pixel of the first core bullet share one left anchor. The page title is left-aligned. No line, rule, band, or decorative stroke appears above the chapter title. No separator appears above the source.
+## Visual assets
 
-The core has white fill and a black 1 pt short-dash border. It has no label, badge, or blue block reading “核心判断”. Measure `TextFrame2.TextRange.BoundHeight`, fit the box to the wrapped text, and move the body origin below it.
-Set the top positions of chapter, page title, and core judgment to 0.4 cm, 1.5 cm, and 2.7 cm.
+Plan relevant decorative/supporting raster visuals before ImageGen without a numeric quota. After generation, review the full page and prefer separate crops for independent observed subjects. Count differences and crop omissions are warnings. Logos must be supplied or verifiably sourced; never fabricate an official logo.
 
-The palette is a design specification only. `assets/company_template.pptx` is the master authority. Never render palette swatches, RGB labels, theme-color cards, or other design-reference blocks on or beside a slide; sanitize slides, slide masters, and custom layouts before saving.
-
-## Python paragraph formatting
-
-### Core judgment
-
-- One or two square-bullet judgments totaling 80–160 non-whitespace characters.
-- Left-aligned; never justify the core text.
-- Microsoft YaHei 12 pt, 1.2 line spacing.
-- Use a 0.64 cm hanging indent for manual square bullets.
-- Use up to 6 pt after each point; the final point has 0 pt paragraph-after spacing.
-
-### Body
-
-- Microsoft YaHei 8–12 pt.
-- Narrative bullets and sufficiently wide prose blocks may use justified alignment, 0.64 cm hanging indent, 6 pt paragraph-after spacing, and 1.2 line spacing.
-- Labels, tables, chart annotations, short bullets, and narrow cards remain left-aligned; do not force justification into them.
-- Never shrink below 8 pt to preserve an overfilled composition. Edit the content structure instead.
-
-## Editability and effects
-
-Keep titles, text, numbers, sources, cards, tables, lines, arrows, and chart elements editable. Use bounded raster crops only for one independent complex subject at a time, such as a logo, pictogram, photo subject, decorative motif, traffic-light mark, or map base. Never combine neighboring objects or use the whole blueprint as a background.
-
-Do not use gradients, shadow, reflection, glow, soft edge, 3D, glass effects, poster composition, magazine composition, launch-event styling, or decorative full-slide imagery. Explicitly neutralize theme-inherited effects on generated shapes, masters, and custom layouts.
+Keep text, numbers, cards, tables, lines, arrows, and chart components editable. Avoid gradient, shadow, reflection, glow, soft edge, 3D, glass, poster, dashboard, magazine, and launch-event styling.

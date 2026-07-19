@@ -1,12 +1,14 @@
-# Standard Report PPT V5.7
+# Standard Report PPT V5.9.6
 
-双语说明： [中文](#中文说明) · [English](#english)
+[中文说明](#中文说明) · [English](#english)
 
-Standard Report PPT is a Codex skill for turning DOCX, PDF, notes, data, or an existing presentation into an editable, fixed-template consulting PowerPoint deck. V5.7 focuses on analytical blueprint quality, bounded visual accents, deterministic reconstruction, and a shorter post-build QA path.
+Standard Report PPT 是一个面向 Codex 的固定模板咨询报告 PPT Skill，可将 DOCX、PDF、研究材料、数据、笔记或已有演示文稿转换为可编辑 PowerPoint。
+
+V5.9.6 在同一套平台无关内容规范之上支持 Windows 和 macOS，并强化了正式蓝图锁定后的视觉清点、图形裁剪和 PPT 资产审计。
 
 ## Blueprint showcase / 蓝图效果展示
 
-The following three pages were produced from the first chapter (P1–P7) of an AI server materials report. Charts, matrices, text, and cards remain editable; small pictograms are used only as supporting accents.
+以下三张蓝图沿用原仓库展示素材。最终 PPT 中的文字、数字、图表、表格和基础图形由本地运行时重建为可编辑对象。
 
 ### S01 — Core material performance / 核心材料性能
 
@@ -24,56 +26,165 @@ The following three pages were produced from the first chapter (P1–P7) of an A
 
 ## 中文说明
 
-### 主要能力
+### V5.9.6 核心能力
 
-- 两个门禁：用户只需确认最终页数和生成方式，随后直接开始制作。
-- 两种模式：`蓝图模式` 用 ImageGen 辅助建立逐页视觉蓝图；`快速模式` 跳过 ImageGen，使用确定性网格快速生成。
-- 分析型画布：图表、表格、矩阵、流程和指标条承担主要信息表达。
-- 克制的视觉点缀：小图形、Logo、旗帜或示意图仅占正文区域约 6%–12%，并放在独立图标通道中。
-- 可编辑输出：文本、数字、表格、图表和基础图形均由 PowerPoint 原生对象重建。
-- 确定性编译：整份演示文稿由一个 `generate_deck.py` 构建，避免逐页脚本和随机版式选择。
-- 完整质量检查：文字编码、固定骨架、素材完整性和蓝图一致性均有自动审计。
-- 精简交付链路：Python 生成后直接渲染目检、复用审计结果、打包并执行交付校验。
+- **两个入口门禁**：只需明确最终页数和生产模式，之后直接执行完整制作流程。
+- **蓝图模式**：每页调用一次 ImageGen，生成结果按字节锁定为正式蓝图；已有蓝图不会因文字、美观或相似度问题自动重做。
+- **快速模式**：跳过 ImageGen，直接生成确定性、平台无关的 `page_specs`。
+- **视觉优先路由**：根据证据选择图表、结构图、视觉节点链、图文比较、查询表、真实流程或叙事模块，不用固定卡片网格套版。
+- **V5.9.6 四象限审查**：正式蓝图锁定后自动生成全页和 Q1–Q4 审查切片，并用 SHA-256 绑定蓝图，避免遗漏底部、边角和小尺寸图形。
+- **强制图形裁剪合同**：`icon`、`pictogram`、`logo`、`map`、`photo`、`illustration`、`device`、`person`、`product`、`flag` 必须形成真实裁剪资产，不能用 `native` 或 `omit` 绕过。
+- **三方数量审计**：强制要求声明数 = 提取数 = PPT 插入数；漏裁、漏插、重复插入或位置越界都会阻止打包。
+- **首次构建锁定**：普通留白、缩放、排版和蓝图相似度差异只产生警告，不触发无意义的美化返工；只有灾难性合同错误允许一次修复构建。
+- **跨平台本地构建**：同一份内容、蓝图、对齐记录和 `page_specs` 自动路由到 Windows COM 或 macOS python-pptx 后端。
+- **可编辑交付**：正文、数字、图表、表格和基础几何保持 PowerPoint 原生可编辑；只有审查确认的非原生视觉作为独立图片资产插入。
+- **确定性编译**：整份演示文稿由一个根目录 `generate_deck.py` 构建，不生成逐页脚本。
 
-### 环境要求
+### 最新工作流
 
-- Windows
+```mermaid
+flowchart TD
+    A[确认最终页数和生产模式] --> B[按原始路径解析材料]
+    B --> C[生成统一 authoring_bundle 与证据清单]
+    C --> D{生产模式}
+
+    D -->|蓝图模式| E[逐页调用一次 ImageGen]
+    E --> F{是否取得可读完整页}
+    F -->|没有产物| G[仅允许一次传输重试]
+    G --> H{重试后是否有产物}
+    H -->|否| I[停止并保存可恢复状态]
+    H -->|是| J[按字节锁定正式蓝图]
+    F -->|是| J
+    J --> K[生成全页与 Q1-Q4 哈希绑定审查切片]
+    K --> L[蓝图对齐、视觉分级与完整图形清点]
+    L --> M[强制裁剪合同与声明/提取一致性检查]
+
+    D -->|快速模式| N[生成确定性平台无关 page_specs]
+    M --> O[平台无关 slides / page_specs / assets]
+    N --> O
+
+    O --> P{自动检测操作系统}
+    P -->|Windows| Q[windows_com_v584]
+    P -->|macOS| R[mac_python_pptx_v1]
+    Q --> S[PowerPoint COM 本地构建与渲染]
+    R --> T[python-pptx 本地构建]
+    T --> U[PowerPoint for Mac 优先渲染<br/>LibreOffice 作为回退]
+    S --> V[文字、骨架、资产、质量与蓝图审计]
+    U --> V
+    V --> W{是否存在灾难性错误}
+    W -->|否| X[锁定首次构建并打包]
+    W -->|是| Y[最多一次灾难性修复构建]
+    Y --> V
+    X --> Z[PPTX + blueprints.zip + py.zip]
+```
+
+### 平台运行路径
+
+#### Windows
+
+运行路径：
+
+```text
+统一内容与蓝图
+  → 平台无关 page_specs
+  → windows_com_v584
+  → Microsoft PowerPoint COM 构建
+  → PowerPoint 渲染
+  → 审计与三文件交付包
+```
+
+要求：
+
+- Windows 10/11
 - Microsoft PowerPoint 桌面版
-- Python 3.12 或兼容版本
-- Codex 桌面端或其他能够加载本地 Skill 的 Codex 环境
-- 蓝图模式需要可用的 ImageGen；快速模式不需要 ImageGen
+- Python 3.12
+- Codex 桌面端或其他可加载本地 Skill 的 Codex 环境
+- 蓝图模式需要可用的 ImageGen
 
-### 安装
-
-将仓库克隆到 Codex 技能目录：
+Windows 安装：
 
 ```powershell
+git clone https://github.com/edchwx-lang/standard-report-ppt.git "$HOME\.codex\skills\standard-report-ppt"
+```
+
+如目录已存在：
+
+```powershell
+git -C "$HOME\.codex\skills\standard-report-ppt" pull
+```
+
+#### macOS
+
+运行路径：
+
+```text
+统一内容与蓝图
+  → 平台无关 page_specs
+  → mac_python_pptx_v1
+  → python-pptx 本地构建
+  → PowerPoint for Mac 渲染（优先）或 LibreOffice 回退
+  → 审计与三文件交付包
+```
+
+macOS 不使用 PowerPoint COM。要求：
+
+- macOS
+- Python 3.12
+- PowerPoint for Mac，或用于回退渲染的 LibreOffice
+- Codex 桌面端或其他可加载本地 Skill 的 Codex 环境
+- 蓝图模式需要可用的 ImageGen
+
+macOS 安装：
+
+```bash
 git clone https://github.com/edchwx-lang/standard-report-ppt.git "$HOME/.codex/skills/standard-report-ppt"
 ```
 
-### 使用示例
+如目录已存在：
+
+```bash
+git -C "$HOME/.codex/skills/standard-report-ppt" pull
+```
+
+如果 PowerPoint for Mac 和 LibreOffice 均不可用，管线可生成结构有效但未渲染验证的本地 PPTX；此状态不会生成已验证的三文件 ZIP。
+
+### 使用方式
 
 ```text
 $standard-report-ppt 用这份报告做3页PPT，蓝图模式
 $standard-report-ppt 用这份报告做5页PPT，快速模式
 ```
 
-蓝图模式和快速模式都必须先明确最终页数与生成方式。详细工作流、视觉规则和交付约束见 [SKILL.md](SKILL.md)。
+也可以先提供材料，再按提示选择：
+
+```text
+1. ImageGen 蓝图还原
+2. 快速生成
+```
+
+最终页数和生产模式是仅有的常规用户确认。完整合同、视觉规则和兼容行为见 [SKILL.md](SKILL.md)。
+
+### 项目管线命令
+
+以下命令用于调试或手动运行已经准备好的项目；普通 Codex 使用无需逐条执行：
+
+```powershell
+python scripts/project_pipeline.py <project> --init
+python scripts/project_pipeline.py <project> --materialize
+python scripts/project_pipeline.py <project> --prepare-visual-review
+python scripts/project_pipeline.py <project> --compile
+python scripts/project_pipeline.py <project> --run --output <project>/output/report.pptx
+```
+
+`--prepare-visual-review` 仅用于 V5.9.6 蓝图模式，并且必须在正式蓝图锁定后执行。
 
 ### 验证
 
 ```powershell
-python -m unittest discover -s tests -p "test_v5_*.py" -q
+python -m unittest discover -s tests -p "test_*.py"
 ```
 
-V5.7 发布前回归结果：61 项测试全部通过。一次实际 3 页测试中，Python 生成至交付校验的自动化链路耗时约为：
-
-| 模式 | 自动化链路耗时 |
-|---|---:|
-| 蓝图模式 | 101.2 秒 |
-| 快速模式 | 52.0 秒 |
-
-蓝图模式还需要额外的 ImageGen 与蓝图合成时间，具体耗时取决于模型响应速度。
+V5.9.6 发布回归包含 V5.1–V5.9.6 兼容测试、Windows/macOS 后端测试、蓝图锁定测试、裁剪合同测试和最终 PPT 资产审计。
 
 ### 目录结构
 
@@ -86,75 +197,84 @@ standard-report-ppt/
 ├─ prompts/
 ├─ references/
 ├─ scripts/
-└─ tests/
+├─ tests/
+├─ requirements-windows.lock
+└─ requirements-macos.lock
 ```
 
 ---
 
 ## English
 
-### Key capabilities
+### What V5.9.6 provides
 
-- Two intake gates: production begins immediately after the user confirms the final slide count and production mode.
-- Two modes: `blueprint` uses ImageGen to create page-specific visual references; `fast` skips ImageGen and uses deterministic body grids.
-- Analytical canvas: charts, tables, matrices, flows, and metric strips carry the primary evidence.
-- Bounded accents: pictograms, supplied logos, flags, and schematic marks occupy roughly 6%–12% of the body area and stay inside reserved icon lanes.
-- Editable output: text, numbers, tables, charts, and primitives are rebuilt as native PowerPoint objects.
-- Deterministic compilation: one `generate_deck.py` builds the entire presentation without per-page scripts or random layout cycling.
-- Automated QA: text encoding, fixed skeleton geometry, asset completeness, and blueprint fidelity are audited before delivery.
-- Short post-build path: build, render, inspect, reuse current audit results, package once, and verify delivery.
+- Two intake gates: the exact final slide count and production mode.
+- Blueprint mode: one successful ImageGen artifact per slide, locked byte-for-byte as the formal blueprint.
+- Fast mode: deterministic, platform-neutral page specifications without ImageGen.
+- Evidence-driven visual routing instead of a fixed card or matrix template.
+- Full-page plus Q1–Q4 hash-bound visual review after the blueprint is locked.
+- Mandatory crop contracts for icons, pictograms, logos, maps, photos, illustrations, devices, people, products, and flags.
+- Strict declared = extracted = inserted asset auditing.
+- First-build release: ordinary aesthetic and fidelity warnings never trigger rebuilds.
+- One shared authoring and `page_specs` path with automatic Windows/macOS backend selection.
+- Native editable PowerPoint text, charts, tables, and basic geometry.
+- One deterministic root `generate_deck.py` for the entire deck.
 
-### Requirements
+### Windows path
 
-- Windows
-- Microsoft PowerPoint desktop
-- Python 3.12 or a compatible version
-- Codex desktop or another Codex environment capable of loading local skills
-- Blueprint mode requires ImageGen; fast mode does not
+```text
+Shared content and blueprint
+  → platform-neutral page_specs
+  → windows_com_v584
+  → Microsoft PowerPoint COM build and render
+  → audits
+  → PPTX + blueprints.zip + py.zip
+```
 
-### Installation
-
-Clone the repository into the Codex skills directory:
+Requirements: Windows 10/11, Microsoft PowerPoint desktop, Python 3.12, a Codex environment that can load local skills, and ImageGen for blueprint mode.
 
 ```powershell
+git clone https://github.com/edchwx-lang/standard-report-ppt.git "$HOME\.codex\skills\standard-report-ppt"
+```
+
+### macOS path
+
+```text
+Shared content and blueprint
+  → platform-neutral page_specs
+  → mac_python_pptx_v1
+  → local python-pptx build
+  → PowerPoint for Mac render or LibreOffice fallback
+  → audits
+  → PPTX + blueprints.zip + py.zip
+```
+
+macOS never uses PowerPoint COM. Requirements: macOS, Python 3.12, PowerPoint for Mac or LibreOffice for rendering, a Codex environment that can load local skills, and ImageGen for blueprint mode.
+
+```bash
 git clone https://github.com/edchwx-lang/standard-report-ppt.git "$HOME/.codex/skills/standard-report-ppt"
 ```
 
-### Usage examples
+Without either renderer, the pipeline may produce a structurally valid local PPTX, but it will not issue the verified three-entry ZIP.
+
+### Usage
 
 ```text
 $standard-report-ppt Create a 3-slide deck from this report in blueprint mode.
 $standard-report-ppt Create a 5-slide deck from this report in fast mode.
 ```
 
-Both modes require an explicit final slide count and production mode. See [SKILL.md](SKILL.md) for the full workflow, visual contract, and delivery rules.
+See [SKILL.md](SKILL.md) for the complete production contract, compatibility behavior, and delivery rules.
 
 ### Validation
 
-```powershell
-python -m unittest discover -s tests -p "test_v5_*.py" -q
+```bash
+python -m unittest discover -s tests -p "test_*.py"
 ```
 
-The V5.7 release passed all 61 regression tests. In one real three-slide validation run, the measured automated path from Python generation through delivery verification took approximately:
-
-| Mode | Automated path |
-|---|---:|
-| Blueprint | 101.2 seconds |
-| Fast | 52.0 seconds |
-
-Blueprint mode also requires ImageGen and blueprint composition time, which varies with model response latency.
-
-### Repository contents
-
-- Skill instructions and agent metadata
-- Prompt and visual-system references
-- PowerPoint template and deterministic generator runtime
-- Pipeline, rendering, audit, and packaging scripts
-- V5.1–V5.7 contract regression tests
-- Three V5.7 blueprint showcase images
+The V5.9.6 regression suite covers V5.1–V5.9.6 compatibility, both platform backends, immutable blueprint locking, mandatory crop contracts, and final PPT asset auditing.
 
 ## Notes
 
 - Generated reports and source documents are not included in this repository.
-- Users are responsible for verifying that any source material, logos, templates, and generated content may be used in their intended context.
-
+- Users are responsible for verifying that source material, logos, templates, and generated content may be used in their intended context.

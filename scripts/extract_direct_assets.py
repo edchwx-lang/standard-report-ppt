@@ -44,11 +44,28 @@ def _literal_assignment(tree: ast.AST, name: str) -> Any:
 def load_generator_contract(generator_path: str | Path) -> tuple[list[dict], dict, dict]:
     source = Path(generator_path).read_text(encoding="utf-8")
     tree = ast.parse(source)
+    try:
+        deck_meta = _literal_assignment(tree, "DECK_META")
+    except ValueError:
+        deck_meta = {}
+    visual_source_name = (
+        "DESIGN_DRAFTS"
+        if deck_meta.get("schema_version") in {"5.8", "5.9"}
+        else "BLUEPRINTS"
+    )
     return (
         _literal_assignment(tree, "SLIDES"),
-        _literal_assignment(tree, "BLUEPRINTS"),
+        _literal_assignment(tree, visual_source_name),
         _literal_assignment(tree, "ASSET_CROPS"),
     )
+
+
+def generator_schema_version(generator_path: str | Path) -> str:
+    tree = ast.parse(Path(generator_path).read_text(encoding="utf-8"))
+    try:
+        return str(_literal_assignment(tree, "DECK_META").get("schema_version", SCHEMA_VERSION))
+    except (ValueError, AttributeError):
+        return SCHEMA_VERSION
 
 
 def _validate_visual_review_contract(slides: list[dict], blueprints: dict) -> list[str]:
@@ -202,6 +219,27 @@ def _declared_visuals(slides: list[dict]) -> dict[str, str]:
     return declared
 
 
+def _declared_v594_crops(slides: list[dict]) -> dict[str, str]:
+    declared: dict[str, str] = {}
+    for slide in slides:
+        if not isinstance(slide, dict):
+            continue
+        slide_id = str(slide.get("slide_id", "?"))
+        visuals = slide.get("complex_visuals", [])
+        if not isinstance(visuals, list):
+            raise ValueError(f"{slide_id}: complex_visuals must be a list")
+        for visual in visuals:
+            asset_id = visual.get("asset_id") if isinstance(visual, dict) else None
+            if not isinstance(asset_id, str) or not asset_id:
+                raise ValueError(
+                    f"{slide_id}: every reviewed crop requires an asset_id"
+                )
+            if asset_id in declared:
+                raise ValueError(f"{asset_id}: duplicate reviewed crop asset_id")
+            declared[asset_id] = slide_id
+    return declared
+
+
 def _valid_rect(rect: Any, size: tuple[int, int]) -> bool:
     return isinstance(rect, list) and len(rect) == 4 and all(isinstance(value, int) for value in rect) and 0 <= rect[0] < rect[2] <= size[0] and 0 <= rect[1] < rect[3] <= size[1]
 
@@ -233,9 +271,60 @@ def _write_montage(records: list[dict], project_dir: Path) -> Path:
 
 def extract_direct_assets(generator_path: str | Path, project_dir: str | Path) -> dict:
     project_dir = Path(project_dir)
+    schema_version = generator_schema_version(generator_path)
+    smooth_v58 = schema_version in {"5.8", "5.9"}
+    brief_path = project_dir / "project_brief.json"
+    brief = (
+        json.loads(brief_path.read_text(encoding="utf-8"))
+        if brief_path.is_file()
+        else {}
+    )
+    revision = str(brief.get("pipeline_revision", ""))
+    strict_v594 = (
+        schema_version == "5.9"
+        and revision in {"5.9.4", "5.9.5", "5.9.6"}
+    )
+    strict_v596 = schema_version == "5.9" and revision == "5.9.6"
     slides, blueprints, crops = load_generator_contract(generator_path)
+    inventory = [
+        visual
+        for slide in slides
+        if isinstance(slide, dict)
+        for visual in slide.get("visual_inventory", [])
+        if isinstance(visual, dict)
+    ]
+    observed_visuals = len(inventory)
+    crop_planned = sum(
+        visual.get("treatment", visual.get("disposition")) == "crop"
+        for visual in inventory
+    )
+    native_planned = sum(
+        visual.get("treatment", visual.get("disposition")) == "native"
+        for visual in inventory
+    )
+    omitted_planned = sum(
+        visual.get("treatment", visual.get("disposition")) == "omit"
+        for visual in inventory
+    )
+    mandatory_crop_kinds = {
+        "icon",
+        "pictogram",
+        "logo",
+        "map",
+        "photo",
+        "illustration",
+        "device",
+        "person",
+        "product",
+        "flag",
+    }
+    mandatory_crop_count = sum(
+        visual.get("kind") in mandatory_crop_kinds
+        for visual in inventory
+    )
     review_errors = _validate_visual_review_contract(slides, blueprints)
-    if review_errors:
+    warnings: list[str] = []
+    if review_errors and not smooth_v58:
         declared_count = sum(
             1
             for slide in slides
@@ -256,8 +345,24 @@ def extract_direct_assets(generator_path: str | Path, project_dir: str | Path) -
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         raise ValueError("; ".join(review_errors))
+    if review_errors:
+        warnings.extend(review_errors)
     kinds = _visual_kinds(slides)
-    declared = _declared_visuals(slides)
+    try:
+        declared = (
+            _declared_v594_crops(slides)
+            if strict_v594
+            else _declared_visuals(slides)
+        )
+    except ValueError as exc:
+        if not smooth_v58:
+            raise
+        warnings.append(str(exc))
+        declared = {
+            str(asset_id): str(spec.get("slide_id", "?"))
+            for asset_id, spec in crops.items()
+            if isinstance(spec, dict)
+        }
     records: list[dict] = []
     errors: list[str] = []
     for asset_id in sorted(set(declared) - set(crops)):
@@ -275,27 +380,42 @@ def extract_direct_assets(generator_path: str | Path, project_dir: str | Path) -
         if not composition_path.is_file():
             errors.append(f"{asset_id}: composition record is missing")
             continue
-        composition = json.loads(composition_path.read_text(encoding="utf-8"))
-        with Image.open(blueprint_path) as blueprint:
-            source_px = crop_spec.get("source_px")
-            if not _valid_rect(source_px, blueprint.size):
-                errors.append(f"{asset_id}: invalid source_px")
-                continue
-            if not _inside(source_px, composition.get("body_roi", [])):
-                errors.append(f"{asset_id}: source_px must stay inside body_roi")
-                continue
-            raw = blueprint.crop(tuple(source_px)).convert("RGB")
-        analysis = analyze_single_object_crop(raw, kind=kinds.get(asset_id, "pictogram"))
-        if not analysis["valid"]:
-            errors.extend(f"{asset_id}: {error}" for error in analysis["errors"])
+        try:
+            composition = json.loads(composition_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            errors.append(f"{asset_id}: composition record is unreadable: {exc}")
             continue
-        padding = int(crop_spec.get("padding_px", 4))
-        trimmed = trim_object(raw, padding)
-        output = project_dir / ".build" / "assets" / slide_id / f"{asset_id}.png"
-        output.parent.mkdir(parents=True, exist_ok=True)
-        trimmed.save(output)
-        target_box = crop_spec.get("target_box_in")
-        placement = contain_rect(trimmed.size, target_box)
+        try:
+            with Image.open(blueprint_path) as blueprint:
+                source_px = crop_spec.get("source_px")
+                if not _valid_rect(source_px, blueprint.size):
+                    errors.append(f"{asset_id}: invalid source_px")
+                    continue
+                if not _inside(source_px, composition.get("body_roi", [])):
+                    errors.append(f"{asset_id}: source_px must stay inside body_roi")
+                    continue
+                raw = blueprint.crop(tuple(source_px)).convert("RGB")
+            analysis = analyze_single_object_crop(raw, kind=kinds.get(asset_id, "pictogram"))
+            if not analysis["valid"]:
+                findings = [
+                    f"{asset_id}: {error}"
+                    for error in analysis["errors"]
+                ]
+                if strict_v594 and "empty_crop" not in analysis["errors"]:
+                    warnings.extend(findings)
+                else:
+                    errors.extend(findings)
+                    continue
+            padding = int(crop_spec.get("padding_px", 4))
+            trimmed = trim_object(raw, padding)
+            output = project_dir / ".build" / "assets" / slide_id / f"{asset_id}.png"
+            output.parent.mkdir(parents=True, exist_ok=True)
+            trimmed.save(output)
+            target_box = crop_spec.get("target_box_in")
+            placement = contain_rect(trimmed.size, target_box)
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+            errors.append(f"{asset_id}: crop extraction failed: {exc}")
+            continue
         records.append({
             "asset_id": asset_id,
             "slide_id": slide_id,
@@ -310,22 +430,56 @@ def extract_direct_assets(generator_path: str | Path, project_dir: str | Path) -
         })
     extracted_ids = {record["asset_id"] for record in records}
     complete_inventory = not errors and extracted_ids == set(declared)
+    if smooth_v58 and not strict_v594:
+        warnings.extend(errors)
+    requested_crop_ids = sorted(set(declared) if strict_v596 else set(crops))
+    extracted_crop_ids = sorted(extracted_ids)
+    expected_crop_ids = set(declared) if strict_v596 else set(crops)
+    missing_crop_ids = sorted(expected_crop_ids - extracted_ids)
+    unexpected_crop_ids = sorted(extracted_ids - expected_crop_ids)
     report = {
-        "schema_version": SCHEMA_VERSION,
-        "ok": complete_inventory,
-        "errors": errors,
+        "schema_version": schema_version,
+        "ok": complete_inventory if strict_v594 else True if smooth_v58 else complete_inventory,
+        "status": (
+            "blocked"
+            if strict_v594 and not complete_inventory
+            else "pass_with_warnings"
+            if warnings
+            else "pass"
+            if strict_v594 or smooth_v58
+            else "pass"
+            if complete_inventory
+            else "blocked"
+        ),
+        "errors": errors if strict_v594 else [] if smooth_v58 else errors,
+        "warnings": warnings,
         "declared_assets": len(declared),
         "extracted_assets": len(extracted_ids),
+        "observed_visuals": observed_visuals,
+        "crop_planned": crop_planned,
+        "mandatory_crop_count": mandatory_crop_count,
+        "native_planned": native_planned,
+        "omitted_planned": omitted_planned,
         "complete_inventory": complete_inventory,
+        "requested_crop_ids": requested_crop_ids,
+        "extracted_crop_ids": extracted_crop_ids,
+        "missing_crop_ids": missing_crop_ids,
+        "unexpected_crop_ids": unexpected_crop_ids,
         "assets": records,
     }
+    if smooth_v58:
+        report["skill_version"] = (
+            revision
+    if revision in {"5.8.3", "5.8.4", "5.9.0", "5.9.1", "5.9.2", "5.9.4", "5.9.5", "5.9.6"}
+            else "5.8.2"
+        )
     report_path = project_dir / ".build" / "direct_asset_report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if records:
         report["montage"] = _write_montage(records, project_dir).relative_to(project_dir).as_posix()
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    if errors:
+    if errors and (not smooth_v58 or strict_v594):
         raise ValueError("; ".join(errors))
     return report
 

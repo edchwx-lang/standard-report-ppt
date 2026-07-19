@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -11,6 +12,15 @@ from pathlib import Path
 SCHEMA_VERSION = "5.6"
 TOLERANCE_IN = 0.02
 ASPECT_TOLERANCE = 0.02
+EMU_PER_POINT = 12700.0
+
+
+def sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _load_extractor():
@@ -22,7 +32,13 @@ def _load_extractor():
     return module
 
 
-def audit_manifest(manifest: dict, asset_crops: dict, asset_report: dict) -> dict:
+def audit_manifest(
+    manifest: dict,
+    asset_crops: dict,
+    asset_report: dict,
+    *,
+    census_crop_ids: set[str] | None = None,
+) -> dict:
     errors: list[str] = []
     report_by_id = {record.get("asset_id"): record for record in asset_report.get("assets", []) if isinstance(record, dict)}
     pages = {page.get("slide_id"): page for page in manifest.get("pages", []) if isinstance(page, dict)}
@@ -50,6 +66,9 @@ def audit_manifest(manifest: dict, asset_crops: dict, asset_report: dict) -> dic
         if expected_aspect <= 0 or abs(actual_aspect / expected_aspect - 1.0) > ASPECT_TOLERANCE:
             errors.append(f"{asset_id}: picture aspect ratio does not match extracted PNG")
         box_x, box_y, box_width, box_height = [float(value) for value in crop.get("target_box_in", [])]
+        if crop.get("target_coord_space") == "body":
+            box_x += 0.56
+            box_y += float(page.get("core_bottom", 0)) / 72.0 + 0.12
         if left < box_x - TOLERANCE_IN or top < box_y - TOLERANCE_IN or left + width > box_x + box_width + TOLERANCE_IN or top + height > box_y + box_height + TOLERANCE_IN:
             errors.append(f"{asset_id}: picture is outside its target box")
         core_bottom = float(page.get("core_bottom", 0)) / 72.0
@@ -57,6 +76,12 @@ def audit_manifest(manifest: dict, asset_crops: dict, asset_report: dict) -> dic
         if top < core_bottom - TOLERANCE_IN or top + height > footer_top + TOLERANCE_IN:
             errors.append(f"{asset_id}: picture must stay inside the body between core and footer")
     declared = set(asset_crops)
+    expected_from_census = set(census_crop_ids or set())
+    for missing in sorted(expected_from_census - declared):
+        errors.append(f"{missing}: crop census subject is missing from ASSET_CROPS")
+    for extra in sorted(declared - expected_from_census):
+        if census_crop_ids is not None:
+            errors.append(f"{extra}: ASSET_CROPS entry is missing from the crop census")
     found = {
         asset_id
         for page in pages.values()
@@ -74,6 +99,7 @@ def audit_manifest(manifest: dict, asset_crops: dict, asset_report: dict) -> dic
         "inserted_assets": len(inserted_declared),
         "complete_inventory": complete_inventory,
         "assets": len(declared),
+        "census_crop_assets": len(expected_from_census),
     }
 
 
@@ -111,11 +137,82 @@ def extract_manifest(pptx_path: str | Path) -> dict:
     return {"pages": pages}
 
 
+def extract_manifest_python_pptx(pptx_path: str | Path) -> dict:
+    from pptx import Presentation
+
+    presentation = Presentation(str(Path(pptx_path).resolve()))
+    pages = []
+    for page_no, slide in enumerate(presentation.slides, start=1):
+        assets: dict[str, list[dict]] = {}
+        core_bottom = 0.0
+        footer_top = float(presentation.slide_height) / EMU_PER_POINT
+        for shape in slide.shapes:
+            name = str(shape.name)
+            left = float(shape.left) / EMU_PER_POINT
+            top = float(shape.top) / EMU_PER_POINT
+            width = float(shape.width) / EMU_PER_POINT
+            height = float(shape.height) / EMU_PER_POINT
+            if name == "SKEL_CORE":
+                core_bottom = top + height
+            elif name == "SKEL_SOURCE":
+                footer_top = top
+            elif name.startswith("ASSET_"):
+                asset_id = name[len("ASSET_"):]
+                assets.setdefault(asset_id, []).append(
+                    {
+                        "left": left,
+                        "top": top,
+                        "width": width,
+                        "height": height,
+                    }
+                )
+        pages.append(
+            {
+                "slide_id": f"S{page_no:02d}",
+                "assets": assets,
+                "core_bottom": core_bottom,
+                "footer_top": footer_top,
+            }
+        )
+    return {"pages": pages}
+
+
 def audit_pptx(pptx_path: str | Path, generator_path: str | Path, project_dir: str | Path, output_path: str | Path | None = None) -> dict:
     extractor = _load_extractor()
     _, _, asset_crops = extractor.load_generator_contract(generator_path)
-    report = json.loads((Path(project_dir) / ".build" / "direct_asset_report.json").read_text(encoding="utf-8"))
-    result = audit_manifest(extract_manifest(pptx_path), asset_crops, report)
+    project = Path(project_dir)
+    report = json.loads((project / ".build" / "direct_asset_report.json").read_text(encoding="utf-8"))
+    census_crop_ids: set[str] | None = None
+    brief_path = project / "project_brief.json"
+    brief: dict = {}
+    if brief_path.is_file():
+        brief = json.loads(brief_path.read_text(encoding="utf-8"))
+        if brief.get("pipeline_revision") in {"5.9.1", "5.9.2", "5.9.4", "5.9.5", "5.9.6"}:
+            visual_manifest = json.loads(
+                (project / ".build" / "visual_manifest.json").read_text(encoding="utf-8")
+            )
+            census_crop_ids = {
+                str(visual["asset_id"])
+                for page in visual_manifest.get("pages", {}).values()
+                if isinstance(page, dict)
+                for visual in page.get("visuals", [])
+                if isinstance(visual, dict)
+                and visual.get("treatment", visual.get("disposition")) == "crop"
+                and isinstance(visual.get("asset_id"), str)
+                and visual.get("asset_id")
+            }
+    ppt_manifest = (
+        extract_manifest_python_pptx(pptx_path)
+        if brief.get("pipeline_revision") in {"5.9.4", "5.9.5", "5.9.6"}
+        else extract_manifest(pptx_path)
+    )
+    result = audit_manifest(
+        ppt_manifest,
+        asset_crops,
+        report,
+        census_crop_ids=census_crop_ids,
+    )
+    result["pptx_sha256"] = sha256_file(pptx_path)
     if output_path:
         destination = Path(output_path)
         destination.parent.mkdir(parents=True, exist_ok=True)

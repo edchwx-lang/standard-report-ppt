@@ -1,67 +1,23 @@
-# PPT quality gates V5.6
+# PPT quality policy V5.8.4
 
-A deck is complete only when every applicable gate passes.
+V5.8.4 retains V5.8.3 intake and the V5.8.2 visual-first default-release policy. It adds one internal post-blueprint alignment stage so display text, visual subjects, and module topology reach the PPT builder.
 
-## Gate 0 — intake and manifests
+## Blockers
 
-- Final page count and production mode are explicit.
-- `project_brief.json` uses schema 5.6.
-- `slides.json` and `page_specs.json` have exact page coverage.
-- Blueprint mode also has `visual_manifest.json` and one composed blueprint per page.
-- No V5.6 project depends on manual `direct_blueprint_state.json` progression.
+1. Required source, template, or blueprint missing, corrupt, unreadable, empty, or changed since its recorded SHA-256 digest.
+2. Blueprint aspect ratio outside 1.50-2.05, full-page effective content below 0.5%, or body-region effective content below 0.25%.
+3. Invalid JSON/runtime structure, unsupported element types, invalid executable coordinates, or unusable chart data.
+4. PowerPoint dependency repair failure, build/save/open/render failure, invalid page count, or damaged PPTX.
+5. Canonical text missing or corrupted in final PPT XML.
+6. Formal blueprint hash differs from the locked ImageGen artifact, or the delivery package fails integrity checks.
+7. For a V5.8.4 blueprint project only, `.build/blueprint_alignment.json` is missing, unreadable, stale, does not cover every page, or is not internally reviewed.
 
-## Gate 1 — content and encoding
+## Warnings
 
-- Required text, figures, dates, units, qualifiers, and sources are preserved.
-- Core judgment has one or two points totaling 80–160 non-whitespace characters.
-- Every `must_keep` and at least 80% of `must_keep + supporting` evidence maps to modules.
-- Source manifests and compiled Python pass the UTF-8 text audit.
-- No `???`, U+FFFD, C1 control, or recognized mojibake sequence exists.
+Blueprint text/OCR differences; recorded factual corrections; uncertain text fallback; additional numbering; visual-plan/count/crop/insertion differences; many or no decorative visuals; crop contamination or omission; chart routing; module topology differences; missing advisory labels; matrices; density; palette; red semantics; evidence coverage; core length; master skeleton; minor overlap; asset audit; and structural fidelity.
 
-## Gate 2 — blueprint visuals
+Warnings produce `pass_with_warnings` and never ask the user to manually release a page. ImageGen may receive one transport retry only when no image artifact was produced. Once an image exists, it is locked.
 
-Blueprint mode only:
+Audits continue to run and contribute metrics. Packaging requires correct page count, valid PPTX and ZIP artifacts, exact canonical PPT text, formal-blueprint hash identity, matching final-PPTX SHA-256 in both `ppt_text_audit.json` and `pipeline_result.json`, and `blocker_count: 0`; it does not require every advisory audit to report `ok=true`.
 
-- Every page has a real accepted composed blueprint and matching SHA-256.
-- Chapter, title, core judgment, body, source, and page number are visible in the blueprint.
-- Each non-native subject is recorded as `crop`; native rebuild is allowlisted.
-- `candidate_count > 0` requires at least one crop.
-- Each independent subject has exactly one crop record, extracted PNG, and insertion.
-- Crops contain no neighboring subject, text, rule, or card border.
-- Declared, extracted, reviewed, and inserted counts agree.
-
-## Gate 3 — compiled generator
-
-- The project has one deterministic `generate_deck.py` compiled from manifests.
-- It has one thin `build_slide_SNN` wrapper per page and exact `PAGE_BUILDERS` coverage.
-- User-visible strings come from manifests, not runtime helper literals.
-- Blueprint source contains no fast geometry, runtime archetype, layout cycle, or modulo selector.
-
-## Gate 4 — skeleton and appearance
-
-- PPTX page count equals the brief.
-- Chapter/title/core use 20/16/12 pt Microsoft YaHei and share a left edge.
-- Their top positions are 0.4 cm, 1.5 cm, and 2.7 cm within 0.02 inches.
-- Title and core have at least 0.06 inches of clear space.
-- No line appears above the chapter or above the footer.
-- No off-slide palette/RGB reference blocks exist.
-- Core box is white with a black 1 pt short-dash border; body starts below its measured height.
-- No shadow, reflection, glow, soft edge, or 3D survives anywhere.
-
-## Gate 5 — rendering and fidelity
-
-- Rendering produces the exact expected page set.
-- Blueprint pages are compared to their own blueprints in the body ROI.
-- Every page passes structure, region distribution, and ink-mass thresholds.
-- A failed page blocks delivery; deck average cannot hide it.
-
-## Gate 6 — automatic audits
-
-- Run `ppt_text_audit.py` for both modes.
-- Run `ppt_skeleton_audit.py` for both modes.
-- Run `ppt_asset_audit.py` and `blueprint_fidelity.py` in blueprint mode.
-- All audit JSON files report `ok: true` and matching page/crop counts.
-
-## Delivery
-
-Default delivery is one desktop ZIP containing the final PPTX, `blueprints.zip`, and `py.zip`. If the user explicitly requests loose PPTX files on the desktop, that request overrides packaging format; audits still must pass before copying the PPTX.
+Run `ppt_skeleton_audit.py` and `ppt_asset_audit.py` for diagnostic metrics; their ordinary visual findings are warnings in V5.8.2.

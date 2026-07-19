@@ -1,55 +1,44 @@
-# Manifest-compiled blueprint reconstruction prompt V5.6
+# Manifest-compiled reconstruction prompt V5.9.1
 
-Describe each accepted page as literal UTF-8 elements and coordinates; compile the manifests into one editable PowerPoint generator.
+Before compilation, consume the reviewed `reconstruction_contract`. Every
+evidence-bearing page element has a stable `element_id` and `module_id`.
+`reconstruction_contract.module_bindings` maps every visible blueprint module
+to its complete executable element set. Do not open either local builder until
+the reconstruction precheck has no blockers.
 
-## Inputs
+`page_specs` are platform-neutral and must not contain COM objects,
+`python-pptx` objects, or backend-specific callable values. After the immutable
+formal blueprint/design draft and alignment gates pass, Windows compiles through
+`windows_com_v584`; macOS compiles through `mac_python_pptx_v1`. Both consume
+the same selected wording, evidence, geometry, design-draft hashes, and crop
+declarations. The macOS path constructs locally with `python-pptx`; PowerPoint
+for Mac or LibreOffice may render but must not construct the deck.
 
-- confirmed `project_brief.json`;
-- ordered canonical `SLIDES` content;
-- accepted `blueprints/SNN.png` images and SHA-256 values;
-- visual system and layout/chart rules;
-- `assets/direct_blueprint_generator_template.py`.
+Treat the V5.8.4-aligned `.build/slides.json` and `.build/page_specs.json` as the runtime source of final display text and layout. The immutable ImageGen result remains the formal blueprint benchmark and crop source; the rendered PPT is structurally compared with it.
 
-## Required project structure
+## Compiled project
 
-Create `.build/slides.json`, `.build/page_specs.json`, and `.build/visual_manifest.json`. Run `project_compiler.py`; it creates only `<project>/generate_deck.py` at the project root and embeds:
+Create one root `generate_deck.py` through `project_compiler.py`. It embeds `DECK_META`, ordered `SLIDES`, `DESIGN_DRAFTS`, `ASSET_CROPS`, literal `PAGE_SPECS`, one thin `build_slide_SNN` wrapper per page, `PAGE_BUILDERS`, and one `build_deck()` using the shared runtime. Do not create per-page generators or hand-edit the compiled generator. Other project helper Python files do not block delivery.
 
-- literal `DECK_META`;
-- ordered literal `SLIDES`;
-- literal `BLUEPRINTS` mapping every final `SNN` to its accepted image;
-- literal `ASSET_CROPS` with one-object source rectangles and aspect-preserving target containers;
-- a distinct thin `build_slide_SNN` wrapper for each final page;
-- literal `PAGE_BUILDERS`;
-- one `build_deck()` that opens PowerPoint once and builds the full deck.
+## Reconstruction
 
-Do not create per-page Python files, default geometry JSON, or reusable fixed-layout page loops.
+1. Enumerate visible modules and give every module a stable `module_id`.
+2. Give every executable element a stable `element_id`, `module_id`, supported type, and positive body-relative box.
+3. Preserve chart series, legends, data labels, row annotations, panel count, and column arrangement in literal page elements.
+4. Inventory every independent non-native subject before choosing Python implementation.
+5. Resolve each subject as `crop`, `native`, or `omit`; never use a generic native visual label.
+6. Validate module bindings, visual bindings, backend support, and geometry through `v591_reconstruction_contract.py`.
+7. Build once using the selected local backend and keep analytical content editable.
+8. Extract one bounded PNG per crop subject and insert it once with contain fit.
+9. Render and record visual deviations as warnings. Do not rebuild only to improve fidelity.
+10. Bind the authoring, alignment, page-spec, manifest, generator, and PPTX evidence through delivery.
 
-## Reconstruction sequence per page
+Compatibility vocabulary: process crop subjects 逐对象 with
+`extract_direct_assets.py`, then place each accepted crop through the shared
+runtime `add_blueprint_asset` helper using its literal `target_box_in`.
 
-1. Inspect the page’s accepted blueprint at full resolution.
-2. Identify the primary visual, supporting regions, alignment anchors, relative widths/heights, internal gutters, chart position, and bounded complex visual candidates.
-3. Add the fixed skeleton with native editable objects. Measure the real core text with `TextFrame2.TextRange.BoundHeight`, resize the short-dash black box, and derive that page’s body rectangle from the measured bottom edge.
-4. Write literal page-specific regions and coordinates into `.build/page_specs.json`. The compiler emits wrappers and the shared runtime renders the declared elements; it never selects a layout.
-5. Rebuild titles, text, numbers, cards, tables, lines, arrows, and chart components as editable PowerPoint objects.
-6. Inspect the accepted blueprint at full size. Record every visual in `.build/visual_manifest.json`. Non-native visual kinds must use crop; `native_rebuild` requires an allowlisted recipe.
-7. For every crop item, add one precise `ASSET_CROPS` entry with `source_px`, `target_box_in`, `fit_mode: contain`, and `padding_px`. Follow the artificial-feed 逐对象 insertion pattern: explicit object rectangle, batch extraction, independent background trim, verified PNG/montage, independent contain-fit insertion. A separate icon, logo, map, or picture always receives a separate entry and call.
-8. Run `extract_direct_assets.py` once before the build. Inspect the montage and require reviewed crop count = declared count = extracted count; if a crop includes another subject, title, label, border, or rule, correct its `source_px` rather than accepting it.
-9. Insert only the pre-extracted PNG through `add_blueprint_asset`; it must preserve aspect ratio, stay inside `target_box_in`, be named `ASSET_<asset_id>`, and produce inserted count = declared count.
-10. Use `assets/company_template.pptx` without adding a masking rectangle. Never create palette swatches, RGB reference cards, or pasteboard objects. Sanitize slides, masters, and custom layouts before and after building. Clear shadow, reflection, glow, soft edge, and 3D effects on every generated shape and again across slides, masters, and custom layouts before save. Name the five skeleton shapes `SKEL_CHAPTER`, `SKEL_TITLE`, `SKEL_CORE`, `SKEL_SOURCE`, and `SKEL_PAGE_NUMBER`.
-11. Render the page and compare it with its own complete blueprint. Revise the same `build_slide_SNN` until the page and complete visual inventory pass, then run both PPT audits on the final deck.
+## Quality boundary
 
-## Content and density
+Canonical text must be present in the final PPT XML. Blueprint text differences are diagnostic because the blueprint is a visual benchmark while Python owns canonical text and final formatting.
 
-- Core judgment: one or two points totaling 80–160 non-whitespace characters.
-- Core points are left-aligned with true or consistently rendered square bullets; the final point has no paragraph-after space.
-- Body density is medium and evidence-rich. Every `must_keep` and at least 80% of `must_keep + supporting` evidence must map to modules; module count follows content and composition and has no fixed minimum.
-- Internal slide/module/group IDs are never visible.
-- Parallel regions are not numbered. Visible numbering requires a genuine sequence, stage, rank, or ordered method.
-
-## Mode integrity
-
-Blueprint mode forbids importing or calling `fast_geometry`, using `runtime_archetype`, cycling a layout list, modulo-based page selection, or using page type to replace blueprint geometry. If a page cannot be reproduced, improve that page builder or crop a bounded complex asset. Do not switch modes without explicit user approval.
-
-## Completion
-
-Run `project_pipeline.py <project> --run`. It derives work from hashes, records stage timing, and runs text, skeleton, asset, and fidelity gates. The deck is deliverable only when all gates pass.
+Run `project_pipeline.py <project> --run`; package when `.build/quality_report.json` has `blocker_count: 0`. Skeleton, asset, fidelity, palette, density, and routing deviations may produce `pass_with_warnings`.

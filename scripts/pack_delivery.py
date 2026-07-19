@@ -28,12 +28,193 @@ REQUIRED_PROJECT_FILES = (
 )
 
 
+def validate_contract_hashes(
+    project_dir: str | Path,
+    expected: dict[str, str],
+) -> list[str]:
+    project = Path(project_dir).resolve()
+    module_path = Path(__file__).with_name("v591_contracts.py")
+    spec = importlib.util.spec_from_file_location(
+        "standard_report_v591_contract_hashes_pack",
+        module_path,
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    current = module.contract_hashes(project)
+    errors: list[str] = []
+    for key, expected_hash in expected.items():
+        actual = current.get(key)
+        if actual != expected_hash:
+            label = key.removesuffix("_sha256")
+            errors.append(f"{label} hash mismatch after compilation")
+    return errors
+
+
 def sha256_file(path: str | Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _is_v594(brief: dict) -> bool:
+    return (
+        brief.get("schema_version") == "5.9"
+        and brief.get("pipeline_revision") == "5.9.4"
+    )
+
+
+def _is_v595(brief: dict) -> bool:
+    return (
+        brief.get("schema_version") == "5.9"
+        and brief.get("pipeline_revision") in {"5.9.5", "5.9.6"}
+    )
+
+
+def validate_packaging_visual_manifest(
+    contracts: object,
+    manifest: dict,
+    brief: dict,
+) -> list[str]:
+    if _is_v594(brief) or _is_v595(brief):
+        report = contracts.diagnose_visual_manifest(manifest)
+        return [
+            str(item["message"])
+            for item in report.get("blockers", [])
+            if isinstance(item, dict)
+        ]
+    return contracts.validate_visual_manifest(manifest)
+
+
+def validate_project_python_policy(
+    project_dir: str | Path,
+    generator_path: str | Path,
+    brief: dict,
+) -> list[str]:
+    project = Path(project_dir).resolve()
+    generator = Path(generator_path).resolve()
+    if brief.get("schema_version") == "5.8" or _is_v594(brief) or _is_v595(brief):
+        return []
+    project_python = sorted(
+        path.resolve()
+        for path in project.rglob("*.py")
+        if path.is_file()
+    )
+    if project_python == [generator]:
+        return []
+    return [
+        "Direct Blueprint delivery requires exactly one project Python file "
+        f"named generate_deck.py; found={[path.name for path in project_python]}"
+    ]
+
+
+def validate_v594_asset_audit(
+    project_dir: str | Path,
+    pptx_path: str | Path,
+    brief: dict,
+) -> list[str]:
+    if not (
+        (_is_v594(brief) or _is_v595(brief))
+        and brief.get("production_mode") == "blueprint"
+    ):
+        return []
+    project = Path(project_dir).resolve()
+    pptx = Path(pptx_path).resolve()
+    audit_path = project / ".build" / "ppt_asset_audit.json"
+    if not audit_path.is_file():
+        return ["missing audit: .build/ppt_asset_audit.json"]
+    try:
+        audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return [f"could not read .build/ppt_asset_audit.json: {exc}"]
+    errors: list[str] = []
+    if audit.get("ok") is not True:
+        errors.append("audit did not pass: .build/ppt_asset_audit.json")
+    if not pptx.is_file() or audit.get("pptx_sha256") != sha256_file(pptx):
+        errors.append("ppt_asset_audit.json PPTX SHA-256 mismatch")
+    counts = [
+        audit.get("declared_assets"),
+        audit.get("inserted_assets"),
+        audit.get("census_crop_assets"),
+    ]
+    if not all(
+        isinstance(value, int) and not isinstance(value, bool)
+        for value in counts
+    ) or len(set(counts)) != 1:
+        errors.append(
+            "ppt_asset_audit.json crop counts must satisfy "
+            "declared_assets == inserted_assets == census_crop_assets"
+        )
+    return errors
+
+
+def validate_v595_postbuild_release(
+    project_dir: str | Path,
+    pptx_path: str | Path,
+    brief: dict,
+) -> list[str]:
+    if not _is_v595(brief):
+        return []
+    project = Path(project_dir).resolve()
+    pptx = Path(pptx_path).resolve()
+    path = project / ".build" / "postbuild_release.json"
+    if not path.is_file():
+        return ["missing V5.9.5+ artifact: .build/postbuild_release.json"]
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return [f"could not read .build/postbuild_release.json: {exc}"]
+    errors: list[str] = []
+    if report.get("decision") != "package" or report.get("build_locked") is not True:
+        errors.append("postbuild_release.json does not authorize packaging")
+    if report.get("catastrophic_blocker_count") != 0:
+        errors.append("postbuild_release.json contains catastrophic blockers")
+    if not pptx.is_file() or report.get("pptx_sha256") != sha256_file(pptx):
+        errors.append("postbuild_release.json PPTX SHA-256 mismatch")
+    return errors
+
+
+def validate_formal_blueprint_manifest(
+    project_dir: str | Path,
+    pptx_path: str | Path,
+    expected_ids: list[str],
+) -> list[str]:
+    project_dir = Path(project_dir).resolve()
+    pptx_path = Path(pptx_path).resolve()
+    manifest_path = project_dir / ".build" / "formal_blueprint_manifest.json"
+    if not manifest_path.is_file():
+        return ["missing V5.8 artifact: .build/formal_blueprint_manifest.json"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    errors: list[str] = []
+    if manifest.get("schema_version") not in {"5.8", "5.9"}:
+        errors.append("formal blueprint manifest schema_version must be 5.8 or 5.9")
+    if not pptx_path.is_file() or manifest.get("pptx_sha256") != sha256_file(pptx_path):
+        errors.append("formal blueprint manifest PPTX SHA-256 mismatch")
+    pages = manifest.get("pages", {})
+    if sorted(pages) != expected_ids:
+        errors.append(f"formal blueprint manifest must cover {expected_ids}; got {sorted(pages)}")
+    for slide_id in expected_ids:
+        page = pages.get(slide_id, {})
+        draft_path = project_dir / str(page.get("design_draft_path", ""))
+        render_path = project_dir / str(page.get("render_path", ""))
+        formal_path = project_dir / str(page.get("formal_blueprint_path", ""))
+        if not draft_path.is_file() or not render_path.is_file() or not formal_path.is_file():
+            errors.append(f"{slide_id}: ImageGen draft, formal blueprint, or final render is missing")
+            continue
+        draft_hash = sha256_file(draft_path)
+        render_hash = sha256_file(render_path)
+        formal_hash = sha256_file(formal_path)
+        if draft_hash != page.get("design_draft_sha256"):
+            errors.append(f"{slide_id}: ImageGen design draft SHA-256 mismatch")
+        if render_hash != page.get("render_sha256"):
+            errors.append(f"{slide_id}: final render SHA-256 mismatch")
+        if formal_hash != page.get("formal_blueprint_sha256"):
+            errors.append(f"{slide_id}: formal blueprint SHA-256 mismatch")
+        if formal_hash != draft_hash:
+            errors.append(f"{slide_id}: formal blueprint must be byte-identical to the original ImageGen result")
+    return errors
 
 
 def verify_delivery_zip(path: str | Path, pptx_name: str) -> dict:
@@ -59,6 +240,111 @@ def verify_delivery_zip(path: str | Path, pptx_name: str) -> dict:
                 if code.namelist() != ["generate_deck.py"] or code.testzip():
                     raise ValueError("py.zip must contain only a valid generate_deck.py")
     return {"outer_entries": expected, "zip_sha256": sha256_file(path)}
+
+
+def _combined_mac_quality(project: Path) -> dict:
+    quality_path = project / ".build" / "mac_quality_report.json"
+    if not quality_path.is_file():
+        raise ValueError("missing Mac quality report")
+    mac = json.loads(quality_path.read_text(encoding="utf-8"))
+    shared_path = project / ".build" / "quality_report.json"
+    shared = (
+        json.loads(shared_path.read_text(encoding="utf-8"))
+        if shared_path.is_file()
+        else {}
+    )
+    shared_warnings = list(shared.get("warnings", []))
+    shared_blockers = list(shared.get("blockers", []))
+    warnings = list(mac.get("warnings", [])) + shared_warnings
+    errors = list(mac.get("errors", [])) + [
+        str(item.get("message", item)) if isinstance(item, dict) else str(item)
+        for item in shared_blockers
+    ]
+    blocker_count = int(
+        shared.get("blocker_count", len(shared_blockers))
+    ) + int(mac.get("blocker_count", len(mac.get("errors", []))))
+    warning_count = int(
+        shared.get("warning_count", len(shared_warnings))
+    ) + int(mac.get("warning_count", len(mac.get("warnings", []))))
+    mac_status = str(mac.get("status", "pass"))
+    if blocker_count or mac_status == "blocked":
+        status = "blocked"
+    elif mac_status == "structurally_valid_unrendered":
+        status = "structurally_valid_unrendered"
+    elif warning_count or mac_status == "pass_with_warnings":
+        status = "pass_with_warnings"
+    else:
+        status = "pass"
+    return {
+        **mac,
+        "status": status,
+        "ok": blocker_count == 0,
+        "warnings": warnings,
+        "errors": errors,
+        "warning_count": warning_count,
+        "blocker_count": blocker_count,
+        "shared_quality_status": shared.get("status", "pass"),
+    }
+
+
+def validate_v59_delivery_status(project_dir: str | Path) -> dict:
+    project = Path(project_dir).resolve()
+    runtime = json.loads(
+        (project / ".build" / "runtime_report.json").read_text(encoding="utf-8")
+    )
+    backend = runtime.get("builder_backend")
+    if backend == "mac_python_pptx_v1":
+        quality = _combined_mac_quality(project)
+        if quality.get("shared_quality_status") == "blocked":
+            raise ValueError("shared quality report blocks formal delivery")
+        if quality.get("visual_verification") is not True:
+            raise ValueError(
+                "formal V5.9 delivery requires local visual verification"
+            )
+        if quality.get("status") not in {"pass", "pass_with_warnings"}:
+            raise ValueError("Mac quality status does not allow formal delivery")
+        return quality
+    if backend == "windows_com_v584":
+        quality_path = project / ".build" / "quality_report.json"
+        if not quality_path.is_file():
+            raise ValueError("missing Windows quality report")
+        quality = json.loads(quality_path.read_text(encoding="utf-8"))
+        if quality.get("status") not in {"pass", "pass_with_warnings"}:
+            raise ValueError("Windows quality status does not allow formal delivery")
+        return {"visual_verification": True, **quality}
+    raise ValueError(f"unsupported V5.9 builder backend: {backend}")
+
+
+def write_v59_loose_delivery(
+    project_dir: str | Path,
+    pptx_path: str | Path,
+) -> dict:
+    project = Path(project_dir).resolve()
+    pptx = Path(pptx_path).resolve()
+    if not pptx.is_file():
+        raise FileNotFoundError(pptx)
+    runtime = json.loads(
+        (project / ".build" / "runtime_report.json").read_text(encoding="utf-8")
+    )
+    if runtime.get("builder_backend") != "mac_python_pptx_v1":
+        raise ValueError("loose V5.9 delivery is only for the Mac backend")
+    quality = _combined_mac_quality(project)
+    if quality.get("status") != "structurally_valid_unrendered":
+        raise ValueError(
+            "loose V5.9 delivery requires structurally_valid_unrendered status"
+        )
+    destination = project / "output" / "quality_report.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        json.dumps(quality, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "status": "structurally_valid_unrendered",
+        "pptx": str(pptx),
+        "quality_report": str(destination),
+        "formal_zip_created": False,
+    }
 
 
 def _write_code_zip(project_dir: Path, runtime_dir: Path, destination: Path) -> None:
@@ -162,6 +448,23 @@ def _read_literal_assignment(path: Path, name: str):
     raise ValueError(f"missing literal assignment {name}")
 
 
+def validate_pptx_hash_bindings(
+    pptx_path: str | Path,
+    pipeline_result: dict,
+    text_audit: dict,
+) -> list[str]:
+    pptx_path = Path(pptx_path)
+    if not pptx_path.is_file():
+        return ["PPTX is missing"]
+    actual_hash = sha256_file(pptx_path)
+    errors: list[str] = []
+    if pipeline_result.get("pptx_sha256") != actual_hash:
+        errors.append("pipeline_result.json PPTX SHA-256 mismatch")
+    if text_audit.get("pptx_sha256") != actual_hash:
+        errors.append("ppt_text_audit.json PPTX SHA-256 mismatch")
+    return errors
+
+
 def _validate_manifest_project(
     project_dir: Path,
     pptx_path: Path,
@@ -210,7 +513,13 @@ def _validate_manifest_project(
             errors.append(f"missing V{schema_version} artifact: .build/visual_manifest.json")
         else:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            errors.extend(contracts.validate_visual_manifest(manifest))
+            errors.extend(
+                validate_packaging_visual_manifest(
+                    contracts,
+                    manifest,
+                    brief,
+                )
+            )
             if schema_version == "5.7":
                 errors.extend(contracts.validate_blueprint_visual_balance(page_specs, manifest))
             pages = manifest.get("pages", {})
@@ -218,32 +527,75 @@ def _validate_manifest_project(
                 errors.append(f"visual_manifest.json must cover {expected_ids}; got {sorted(pages)}")
             for slide_id in expected_ids:
                 page = pages.get(slide_id, {})
-                relative = page.get("blueprint_path")
-                blueprint_path = project_dir / relative if isinstance(relative, str) else None
-                if blueprint_path is None or not blueprint_path.is_file():
-                    errors.append(f"{slide_id}: accepted blueprint is missing")
-                    continue
-                if sha256_file(blueprint_path) != page.get("blueprint_sha256"):
-                    errors.append(f"{slide_id}: accepted blueprint SHA-256 mismatch")
+                if schema_version in {"5.8", "5.9"}:
+                    relative = page.get("design_draft_path")
+                    draft_path = project_dir / relative if isinstance(relative, str) else None
+                    if draft_path is None or not draft_path.is_file():
+                        errors.append(f"{slide_id}: design draft is missing")
+                        continue
+                    if sha256_file(draft_path) != page.get("design_draft_sha256"):
+                        errors.append(f"{slide_id}: design draft SHA-256 mismatch")
+                else:
+                    relative = page.get("blueprint_path")
+                    blueprint_path = project_dir / relative if isinstance(relative, str) else None
+                    if blueprint_path is None or not blueprint_path.is_file():
+                        errors.append(f"{slide_id}: accepted blueprint is missing")
+                        continue
+                    if sha256_file(blueprint_path) != page.get("blueprint_sha256"):
+                        errors.append(f"{slide_id}: accepted blueprint SHA-256 mismatch")
+            if schema_version in {"5.8", "5.9"}:
+                errors.extend(validate_formal_blueprint_manifest(project_dir, pptx_path, expected_ids))
 
     if pipeline_result.get("schema_version") != schema_version or pipeline_result.get("ok") is not True:
         errors.append(f"V{schema_version} pipeline_result.json must report ok=true")
     if pipeline_result.get("pages") != expected_count:
         errors.append(f"V{schema_version} pipeline result page count mismatch")
-    audit_requirements = {
-        "ppt_text_audit.json": "ok",
-        "ppt_skeleton_audit.json": "ok",
-    }
-    if mode == "blueprint":
-        audit_requirements.update({"ppt_asset_audit.json": "ok", "blueprint_fidelity.json": "passed"})
+    audit_requirements = {"ppt_text_audit.json": "ok"}
+    if schema_version not in {"5.8", "5.9"}:
+        audit_requirements["ppt_skeleton_audit.json"] = "ok"
+    if mode == "blueprint" and schema_version not in {"5.8", "5.9"}:
+        audit_requirements.update({
+            "ppt_asset_audit.json": "ok",
+            "blueprint_fidelity.json": "passed",
+            "blueprint_text_benchmark.json": "ok",
+        })
+    text_audit: dict = {}
     for filename, field in audit_requirements.items():
         audit_path = project_dir / ".build" / filename
         if not audit_path.is_file():
             errors.append(f"missing audit: .build/{filename}")
             continue
         audit = json.loads(audit_path.read_text(encoding="utf-8"))
+        if filename == "ppt_text_audit.json":
+            text_audit = audit
         if audit.get(field) is not True:
             errors.append(f"audit did not pass: .build/{filename}")
+
+    if schema_version in {"5.8", "5.9"}:
+        errors.extend(validate_pptx_hash_bindings(pptx_path, pipeline_result, text_audit))
+    if schema_version == "5.8":
+        quality_path = project_dir / ".build" / "quality_report.json"
+        if not quality_path.is_file():
+            errors.append("missing V5.8 artifact: .build/quality_report.json")
+        else:
+            quality = json.loads(quality_path.read_text(encoding="utf-8"))
+            revision = str(brief.get("pipeline_revision", ""))
+            expected_skill_version = revision if revision in {"5.8.3", "5.8.4"} else "5.8.2"
+            if quality.get("skill_version") != expected_skill_version:
+                errors.append(
+                    f"quality_report.json skill_version must be {expected_skill_version}"
+                )
+            quality_blockers = quality.get("blocker_count")
+            if not isinstance(quality_blockers, int) or isinstance(quality_blockers, bool):
+                errors.append("quality_report.json blocker_count must be an integer")
+                quality_blockers = 1
+            if quality.get("status") == "blocked" or quality_blockers > 0:
+                errors.append("quality_report.json contains blocking issues")
+        if pipeline_result.get("quality_status") not in {"pass", "pass_with_warnings"}:
+            errors.append("V5.8 pipeline_result.json quality_status must allow delivery")
+        pipeline_blockers = pipeline_result.get("blocker_count")
+        if not isinstance(pipeline_blockers, int) or isinstance(pipeline_blockers, bool) or pipeline_blockers != 0:
+            errors.append("V5.8 pipeline_result.json must report blocker_count=0")
 
     generator_text = generator_path.read_text(encoding="utf-8")
     try:
@@ -270,6 +622,41 @@ def _validate_v56_project(project_dir: Path, pptx_path: Path, generator_path: Pa
 
 def _validate_v57_project(project_dir: Path, pptx_path: Path, generator_path: Path) -> list[str]:
     return _validate_manifest_project(project_dir, pptx_path, generator_path, schema_version="5.7")
+
+
+def _validate_v58_project(project_dir: Path, pptx_path: Path, generator_path: Path) -> list[str]:
+    return _validate_manifest_project(project_dir, pptx_path, generator_path, schema_version="5.8")
+
+
+def _validate_v59_project(
+    project_dir: Path,
+    pptx_path: Path,
+    generator_path: Path,
+) -> list[str]:
+    errors = _validate_manifest_project(
+        project_dir, pptx_path, generator_path, schema_version="5.9"
+    )
+    brief = json.loads(
+        (project_dir / "project_brief.json").read_text(encoding="utf-8")
+    )
+    if brief.get("pipeline_revision") in {"5.9.1", "5.9.2", "5.9.4", "5.9.5", "5.9.6"}:
+        try:
+            deck_meta = _read_literal_assignment(generator_path, "DECK_META")
+        except (SyntaxError, ValueError) as exc:
+            errors.append(f"could not read V5.9 contract hashes: {exc}")
+        else:
+            expected = deck_meta.get("contract_hashes")
+            if not isinstance(expected, dict) or not expected:
+                errors.append("V5.9 generator is missing contract hashes")
+            else:
+                errors.extend(validate_contract_hashes(project_dir, expected))
+    try:
+        validate_v59_delivery_status(project_dir)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        errors.append(str(exc))
+    errors.extend(validate_v594_asset_audit(project_dir, pptx_path, brief))
+    errors.extend(validate_v595_postbuild_release(project_dir, pptx_path, brief))
+    return errors
 
 
 def _run_skeleton_audit(project_dir: Path, pptx_path: Path) -> dict:
@@ -326,29 +713,32 @@ def package_direct_delivery(
     Python is deliberately restricted to one whole-deck generator.
     """
 
+    wall_start = time.time()
     project_dir = Path(project_dir).resolve()
     pptx_path = Path(pptx_path).resolve()
     generator_path = Path(generator_path).resolve()
     output_zip = Path(output_zip).resolve()
     desktop_dir = Path(desktop_dir or (Path.home() / "Desktop")).resolve()
-    if output_zip.parent != desktop_dir:
-        raise ValueError(f"final Direct Blueprint ZIP must be written directly to the desktop: {desktop_dir}")
     if not pptx_path.is_file():
         raise FileNotFoundError(pptx_path)
     if not generator_path.is_file():
         raise FileNotFoundError(generator_path)
     if generator_path.parent != project_dir or generator_path.name != "generate_deck.py":
         raise ValueError("the project generator must be <project>/generate_deck.py")
-    project_python = sorted(path.resolve() for path in project_dir.rglob("*.py") if path.is_file())
-    if project_python != [generator_path]:
-        raise ValueError(
-            "Direct Blueprint delivery requires exactly one project Python file named generate_deck.py; "
-            f"found={[path.name for path in project_python]}"
-        )
     brief_path = project_dir / "project_brief.json"
     if not brief_path.is_file():
         raise FileNotFoundError(brief_path)
     brief = json.loads(brief_path.read_text(encoding="utf-8"))
+    schema_version = brief.get("schema_version")
+    if schema_version not in {"5.8", "5.9"} and output_zip.parent != desktop_dir:
+        raise ValueError(f"final Direct Blueprint ZIP must be written directly to the desktop: {desktop_dir}")
+    python_policy_errors = validate_project_python_policy(
+        project_dir,
+        generator_path,
+        brief,
+    )
+    if python_policy_errors:
+        raise ValueError("\n".join(python_policy_errors))
     mode = brief.get("production_mode")
     expected_page_count = brief.get("requested_page_count")
     blueprint_files = [
@@ -359,8 +749,13 @@ def package_direct_delivery(
     if mode == "blueprint" and not blueprint_files:
         raise FileNotFoundError("no blueprint images found in <project>/blueprints")
 
-    schema_version = brief.get("schema_version")
-    if schema_version == "5.7":
+    if schema_version == "5.9":
+        validation_errors = _validate_v59_project(
+            project_dir, pptx_path, generator_path
+        )
+    elif schema_version == "5.8":
+        validation_errors = _validate_v58_project(project_dir, pptx_path, generator_path)
+    elif schema_version == "5.7":
         validation_errors = _validate_v57_project(project_dir, pptx_path, generator_path)
     elif schema_version == "5.6":
         _run_skeleton_audit(project_dir, pptx_path)
@@ -411,6 +806,7 @@ def package_direct_delivery(
         "schema_version": str(brief.get("schema_version", "5.5")),
         "zip_path": str(output_zip),
         "zip_sha256": verification["zip_sha256"],
+        "pptx_sha256": sha256_file(pptx_path),
         "pptx_page_count": actual_page_count,
         "outer_entries": verification["outer_entries"],
         "package_seconds": package_seconds,
@@ -421,6 +817,21 @@ def package_direct_delivery(
     temporary_record = record_path.with_suffix(".json.tmp")
     temporary_record.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary_record.replace(record_path)
+    if brief.get("schema_version") == "5.8" and brief.get("pipeline_revision") in {"5.8.3", "5.8.4"}:
+        timing_path = Path(__file__).with_name("v583_timing.py")
+        spec = importlib.util.spec_from_file_location("standard_report_v583_timing_package", timing_path)
+        timing = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(timing)
+        timing.record_stage(
+            project_dir,
+            "package",
+            wall_start,
+            time.time(),
+            ok=True,
+            attempt_count=1,
+        )
+        timing.summarize_timing(project_dir)
     return output_zip
 
 

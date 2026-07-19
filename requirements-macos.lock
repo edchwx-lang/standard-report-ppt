@@ -1,0 +1,7 @@
+python-pptx==1.0.2
+Pillow==12.2.0
+lxml==6.0.2
+XlsxWriter==3.2.9
+fonttools==4.63.0
+# Optional renderer dependency; absence yields structurally_valid_unrendered.
+pypdfium2==5.11.0
