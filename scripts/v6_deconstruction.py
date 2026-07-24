@@ -6,123 +6,87 @@ from typing import Any
 SCHEMA_VERSION = "6.0"
 DECONSTRUCTION_BODY_BITMAP_FORBIDDEN = "DECONSTRUCTION_BODY_BITMAP_FORBIDDEN"
 MAC_RECONSTRUCTION_UNSUPPORTED = "MAC_RECONSTRUCTION_UNSUPPORTED"
-
-_MAC_SUPPORTED_TYPES = frozenset(
-    {
-        "asset", "section_header", "text", "rect", "oval", "line", "arrow",
-        "text_card", "metric_strip", "hbar_chart", "column_chart", "line_chart",
-        "combo_chart", "donut_chart", "grouped_hbar_chart", "flow", "matrix",
-    }
-)
-_ASSET_TYPES = frozenset({"asset", "body_asset"})
-_PURE_VISUAL_KINDS = frozenset({"map", "photo", "illustration", "device", "person", "product"})
+_ASSET_TYPES = {"asset", "body_asset"}
+_PURE_VISUAL_KINDS = {"map", "photo", "illustration", "device", "person", "product"}
+_SKELETON_ROLES = {"chapter", "title", "core_point", "source", "page_number"}
+_MAC_TYPES = {"asset", "section_header", "text", "rect", "oval", "line", "arrow", "text_card", "metric_strip", "hbar_chart", "column_chart", "line_chart", "combo_chart", "donut_chart", "grouped_hbar_chart", "flow", "matrix"}
 
 
 def _pages(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
-    nested = value.get("pages")
-    return nested if isinstance(nested, dict) else value
+    return value["pages"] if isinstance(value.get("pages"), dict) else value
 
 
 def _issue(code: str, slide_id: str, message: str) -> dict[str, Any]:
     return {"code": code, "severity": "blocker", "stage": "deconstruction_prebuild", "slide_id": slide_id, "message": message}
 
 
-def _is_deconstruct_v6(brief: Any) -> bool:
+def _is_v6_deconstruct(brief: Any) -> bool:
     return isinstance(brief, dict) and brief.get("schema_version") == "6.0" and brief.get("pipeline_revision") == "6.0.0" and brief.get("construction_mode") == "deconstruct"
 
 
-def _element_asset_id(element: dict[str, Any]) -> str | None:
-    for key in ("asset_id", "element_id"):
-        value = element.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
+def _body_selected_text(page: dict[str, Any]) -> list[str]:
+    decisions = page.get("text_decisions", []) if isinstance(page.get("text_decisions"), list) else []
+    return [item["selected"] for item in decisions if isinstance(item, dict) and isinstance(item.get("selected"), str) and item["selected"].strip() and item.get("role") not in _SKELETON_ROLES]
 
 
-def _selected_text(contract: dict[str, Any]) -> list[str]:
-    values: list[str] = []
-    for decision in contract.get("text_decisions", []) if isinstance(contract.get("text_decisions"), list) else []:
-        if isinstance(decision, dict) and isinstance(decision.get("selected"), str) and decision["selected"].strip():
-            values.append(decision["selected"])
-    return values
-
-
-def validate_deconstruction_prebuild(
-    brief: dict[str, Any], page_specs: dict[str, Any], alignment: dict[str, Any], backend: str
-) -> dict[str, Any]:
-    """Reject V6 deconstruction specs that replace editable content with body bitmaps."""
-    if not _is_deconstruct_v6(brief):
+def validate_deconstruction_prebuild(brief: dict[str, Any], page_specs: dict[str, Any], alignment: dict[str, Any], backend: str) -> dict[str, Any]:
+    """Guard V6 deconstruction against replacing reviewed editable modules with a bitmap."""
+    if not _is_v6_deconstruct(brief):
         return {"schema_version": SCHEMA_VERSION, "status": "pass", "ok": True, "warnings": [], "blockers": [], "warning_count": 0, "blocker_count": 0, "page_count": 0, "allowed_large_visual_asset_ids": []}
 
     blockers: list[dict[str, Any]] = []
-    warnings: list[dict[str, Any]] = []
     allowed: set[str] = set()
-    spec_pages = _pages(page_specs)
-    alignment_pages = _pages(alignment)
-    for slide_id, raw_page in spec_pages.items():
-        page = raw_page if isinstance(raw_page, dict) else {}
-        elements = [item for item in page.get("elements", []) if isinstance(item, dict)]
-        element_by_id = {item.get("element_id"): item for item in elements if isinstance(item.get("element_id"), str) and item["element_id"]}
-        contract = page.get("reconstruction_contract") if isinstance(page.get("reconstruction_contract"), dict) else {}
+    specs = _pages(page_specs)
+    aligned = _pages(alignment)
+    for slide_id, raw_spec in specs.items():
+        spec = raw_spec if isinstance(raw_spec, dict) else {}
+        page = aligned.get(slide_id, {}) if isinstance(aligned.get(slide_id, {}), dict) else {}
+        elements = [item for item in spec.get("elements", []) if isinstance(item, dict)]
+        by_id = {item["element_id"]: item for item in elements if isinstance(item.get("element_id"), str) and item["element_id"]}
+        contract = page.get("reconstruction_contract", {}) if isinstance(page.get("reconstruction_contract"), dict) else {}
         bindings = [item for item in contract.get("module_bindings", []) if isinstance(item, dict)]
+        body_text = _body_selected_text(page)
+
         if backend == "mac_python_pptx_v2":
             for element in elements:
-                if element.get("type") not in _MAC_SUPPORTED_TYPES:
-                    blockers.append(_issue(MAC_RECONSTRUCTION_UNSUPPORTED, str(slide_id), f"{element.get('element_id', '?')}: unsupported Mac element type {element.get('type')!r}"))
+                if element.get("type") not in _MAC_TYPES:
+                    blockers.append(_issue(MAC_RECONSTRUCTION_UNSUPPORTED, str(slide_id), f"unsupported Mac element type {element.get('type')!r}"))
         if any(element.get("type") == "body_asset" for element in elements):
-            blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, str(slide_id), "body_asset is reserved for bitmap construction mode"))
+            blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, str(slide_id), "body_asset is reserved for bitmap mode"))
 
-        asset_binding_counts: dict[str, int] = {}
-        binding_elements: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+        bound_modules: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+        asset_references: dict[str, int] = {}
         for binding in bindings:
-            ids = binding.get("element_ids") if isinstance(binding.get("element_ids"), list) else []
-            bound = [element_by_id[item] for item in ids if isinstance(item, str) and item in element_by_id]
-            binding_elements.append((binding, bound))
+            ids = binding.get("element_ids", []) if isinstance(binding.get("element_ids"), list) else []
+            bound = [by_id[item] for item in ids if isinstance(item, str) and item in by_id]
+            bound_modules.append((binding, bound))
             for element in bound:
                 if element.get("type") in _ASSET_TYPES:
-                    asset_id = _element_asset_id(element)
-                    if asset_id:
-                        asset_binding_counts[asset_id] = asset_binding_counts.get(asset_id, 0) + 1
-            if bound and all(element.get("type") in _ASSET_TYPES for element in bound):
-                declared_editable = bool(binding.get("editable") or binding.get("native") or binding.get("requires_editable"))
-                if declared_editable or _selected_text(contract):
-                    blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, str(slide_id), f"module {binding.get('module_id', '?')} contains editable content but is represented only by assets"))
-        if any(count > 1 for count in asset_binding_counts.values()):
-            blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, str(slide_id), "one asset element is bound to multiple modules"))
-        asset_only = [bound for _, bound in binding_elements if bound and all(item.get("type") in _ASSET_TYPES for item in bound)]
-        if len(asset_only) > 1 and len({ _element_asset_id(item) for bound in asset_only for item in bound }) == 1:
-            blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, str(slide_id), "visible body modules collapse to one composite asset"))
-        if len(elements) == 1 and elements[0].get("type") in _ASSET_TYPES and len(bindings) > 1:
-            blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, str(slide_id), "classic skeleton plus one composite body image is forbidden"))
+                    asset_id = element.get("asset_id", element.get("element_id"))
+                    if isinstance(asset_id, str):
+                        asset_references[asset_id] = asset_references.get(asset_id, 0) + 1
+            if bound and all(element.get("type") in _ASSET_TYPES for element in bound) and (body_text or binding.get("editable") or binding.get("native") or binding.get("requires_editable")):
+                blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, str(slide_id), f"module {binding.get('module_id', '?')} is editable/native but has only assets"))
+        if any(count > 1 for count in asset_references.values()):
+            blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, str(slide_id), "one asset element is referenced by multiple module bindings"))
 
-        visual_page = alignment_pages.get(slide_id, {})
-        visuals = visual_page.get("visuals", []) if isinstance(visual_page, dict) else []
-        visuals = [item for item in visuals if isinstance(item, dict)]
+        visuals = [item for item in page.get("visuals", []) if isinstance(item, dict)]
         page_allowed: set[str] = set()
         for element in elements:
             if element.get("type") not in _ASSET_TYPES:
                 continue
-            asset_id = _element_asset_id(element)
-            matched = [item for item in visuals if item.get("asset_id") == asset_id or item.get("element_id") == element.get("element_id")]
-            modules = [bound for _, bound in binding_elements if element in bound]
-            module_is_pure = len(modules) == 1 and all(item.get("type") in _ASSET_TYPES for item in modules[0])
-            if len(matched) == 1 and matched[0].get("kind") in _PURE_VISUAL_KINDS and module_is_pure and not _selected_text(contract):
-                page_allowed.add(asset_id or str(element.get("element_id")))
+            element_id = element.get("element_id")
+            asset_id = element.get("asset_id", element_id)
+            modules = [bound for _, bound in bound_modules if element in bound]
+            matched = [visual for visual in visuals if visual.get("asset_id") == asset_id or visual.get("element_id") == element_id]
+            pure_module = len(modules) == 1 and len(modules[0]) == 1 and modules[0][0].get("type") in _ASSET_TYPES
+            if isinstance(asset_id, str) and len(matched) == 1 and matched[0].get("kind") in _PURE_VISUAL_KINDS and pure_module and not body_text:
+                page_allowed.add(asset_id)
         asset_elements = [element for element in elements if element.get("type") in _ASSET_TYPES]
         if len(elements) == 1 and len(asset_elements) == 1 and not page_allowed:
-            blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, str(slide_id), "a composite body-image page spec is not a deconstruction"))
+            blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, str(slide_id), "classic skeleton plus one composite body-image page spec is forbidden"))
         allowed.update(page_allowed)
 
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "status": "blocked" if blockers else "pass",
-        "ok": not blockers,
-        "warnings": warnings,
-        "blockers": blockers,
-        "warning_count": len(warnings),
-        "blocker_count": len(blockers),
-        "page_count": len(spec_pages),
-        "allowed_large_visual_asset_ids": sorted(allowed),
-    }
+    return {"schema_version": SCHEMA_VERSION, "status": "blocked" if blockers else "pass", "ok": not blockers, "warnings": [], "blockers": blockers, "warning_count": 0, "blocker_count": len(blockers), "page_count": len(specs), "allowed_large_visual_asset_ids": sorted(allowed)}

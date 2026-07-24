@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +15,7 @@ from pptx.util import Inches
 
 
 ROOT = Path(__file__).resolve().parents[1]
+RUNTIME = Path(r"C:\Users\edchw\.cache\codex-runtimes\codex-primary-runtime\dependencies\python")
 
 
 def load_module(name: str, path: Path):
@@ -25,107 +26,89 @@ def load_module(name: str, path: Path):
     return module
 
 
-def skeleton(slide):
-    for name, top in (("SKEL_CHAPTER", .1), ("SKEL_TITLE", .3), ("SKEL_CORE", .5), ("SKEL_SOURCE", 6.8), ("SKEL_PAGE_NUMBER", 6.9)):
-        shape = slide.shapes.add_textbox(Inches(.1), Inches(top), Inches(1), Inches(.1))
-        shape.name = name
+def reviewed(decisions=None):
+    return {"pages": {"S01": {"text_decisions": decisions or [
+        {"role": "chapter", "selected": "Chapter"}, {"role": "title", "selected": "Title"},
+        {"role": "core_point", "selected": "Core"}, {"role": "source", "selected": "Source"},
+        {"role": "page_number", "selected": "1"},
+    ], "reconstruction_contract": {"module_bindings": []}, "visuals": []}}}
 
 
-def add_asset(slide, image: Path, name: str, left=1, top=1, width=5, height=3):
-    shape = slide.shapes.add_picture(str(image), Inches(left), Inches(top), Inches(width), Inches(height))
+def add_skeleton(slide):
+    definitions = (("SKEL_CHAPTER", .56, .1, 11.13, .2, "Chapter"), ("SKEL_TITLE", .56, .3, 11.13, .2, "Title"), ("SKEL_CORE", .56, .5, 11.13, .1, "Core"), ("SKEL_SOURCE", .56, 6.8, 11.13, .1, "Source"), ("SKEL_PAGE_NUMBER", .56, 6.95, 1, .1, "1"))
+    for name, left, top, width, height, text in definitions:
+        shape = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
+        shape.name, shape.text = name, text
+
+
+def add_picture(slide, asset, name, left=.56, top=.88, width=11.13, height=5.565):
+    shape = slide.shapes.add_picture(str(asset), Inches(left), Inches(top), Inches(width), Inches(height))
     shape.name = name
+    return shape
 
 
 class V6EditabilityAuditTests(unittest.TestCase):
     def setUp(self):
-        self.subject = load_module(
-            "v6_editability_audit", ROOT / "scripts" / "v6_editability_audit.py"
-        )
+        self.subject = load_module("v6_editability_audit", ROOT / "scripts" / "v6_editability_audit.py")
+        self.bitmap = load_module("v6_bitmap", ROOT / "scripts" / "v6_bitmap.py")
 
-    def make_presentation(self, directory: Path):
-        presentation = Presentation()
-        presentation.slide_width = Inches(12)
-        presentation.slide_height = Inches(7.5)
-        slide = presentation.slides.add_slide(presentation.slide_layouts[6])
-        skeleton(slide)
-        return presentation, slide, directory / "deck.pptx"
+    def deck(self, directory):
+        ppt = Presentation(); ppt.slide_width = Inches(12.25); ppt.slide_height = Inches(7.5)
+        slide = ppt.slides.add_slide(ppt.slide_layouts[6]); add_skeleton(slide)
+        return ppt, slide, Path(directory) / "deck.pptx"
 
-    def test_composite_half_slide_body_picture_fails_postbuild(self):
+    def bitmap_contract(self, directory):
+        project = Path(directory) / "project"; (project / "blueprints").mkdir(parents=True)
+        Image.new("RGB", (400, 200), "navy").save(project / "blueprints" / "S01.png")
+        review = self.bitmap.prepare_bitmap_review(project)
+        alignment = {"schema_version": "6.0", "pipeline_revision": "6.0.0", "construction_mode": "bitmap", "pages": {"S01": {"reviewed_full_page": True, "blueprint_sha256": review["pages"]["S01"]["blueprint_sha256"], "source_px": [10, 20, 390, 190], "excluded_skeleton_regions": list(self.bitmap.EXCLUDED_SKELETON_REGIONS)}}}
+        (project / ".build" / "bitmap_alignment.json").write_text(json.dumps(alignment), encoding="utf-8")
+        contract = self.bitmap.materialize_bitmap_assets(project)
+        return project, contract, project / contract["pages"]["S01"]["asset_path"]
+
+    def test_postbuild_uses_alignment_text_and_prefix_element_names(self):
         with tempfile.TemporaryDirectory() as directory:
-            directory = Path(directory)
-            image = directory / "body.png"
-            Image.new("RGB", (500, 300), "navy").save(image)
-            ppt, slide, deck = self.make_presentation(directory)
-            add_asset(slide, image, "EL_COMPOSITE", 3, 2, 6, 3.5)
+            ppt, slide, deck = self.deck(directory)
+            text = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(3), Inches(.3)); text.name = "EL_TEXT_1"; text.text = "Body copy"
+            table = slide.shapes.add_table(2, 2, Inches(1), Inches(2), Inches(3), Inches(1)); table.name = "EL_TABLE_1"
+            data = CategoryChartData(); data.categories = ["A"]; data.add_series("S", (1,))
+            chart = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(5), Inches(2), Inches(2), Inches(1), data); chart.name = "EL_CHART_1"
+            node = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(1), Inches(4), Inches(1), Inches(.3)); node.name = "EL_FLOW_1"
+            line = slide.shapes.add_connector(1, Inches(2), Inches(4.1), Inches(3), Inches(4.1)); line.name = "EL_FLOW_2"
             ppt.save(deck)
-            specs = {"S01": {"elements": [{"element_id": "COMPOSITE", "type": "asset"}], "reconstruction_contract": {"module_bindings": [{"module_id": "body", "element_ids": ["COMPOSITE"]}], "text_decisions": [{"selected": "Editable conclusion"}]}}}
-            report = self.subject.audit_deconstruction_pptx(deck, specs, {"pages": {"S01": {}}})
+            specs = {"S01": {"elements": [{"element_id": "TEXT", "type": "text"}, {"element_id": "TABLE", "type": "matrix"}, {"element_id": "CHART", "type": "column_chart"}, {"element_id": "FLOW", "type": "flow"}]}}
+            alignment = reviewed(); alignment["pages"]["S01"]["text_decisions"].append({"role": "body", "selected": "Body copy"})
+            self.assertTrue(self.subject.audit_deconstruction_pptx(deck, specs, alignment)["ok"])
+            slide.shapes._spTree.remove(line._element); ppt.save(deck)
+            self.assertFalse(self.subject.audit_deconstruction_pptx(deck, specs, alignment)["ok"])
+            ppt, slide, deck = self.deck(directory)
+            text_only = slide.shapes.add_textbox(Inches(1), Inches(4), Inches(2), Inches(.3)); text_only.name = "EL_FLOW_1"; text_only.text = "not a flow node"
+            ppt.save(deck)
+            self.assertFalse(self.subject.audit_deconstruction_pptx(deck, {"S01": {"elements": [{"element_id": "FLOW", "type": "flow"}]}}, reviewed())["ok"])
+
+    def test_large_body_picture_fails_for_editability_not_missing_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            asset = Path(directory) / "map.png"; Image.new("RGB", (400, 200), "navy").save(asset)
+            ppt, slide, deck = self.deck(directory); add_picture(slide, asset, "EL_MAP_1"); ppt.save(deck)
+            specs = {"S01": {"elements": [{"element_id": "MAP", "asset_id": "MAP_ASSET", "type": "asset"}]}}
+            report = self.subject.audit_deconstruction_pptx(deck, specs, reviewed())
             self.assertFalse(report["ok"])
-            self.assertIn("DECONSTRUCTION_EDITABILITY_FAILED", [item["code"] for item in report["blockers"]])
+            self.assertTrue(any("large body picture" in item["message"] for item in report["blockers"]))
+            self.assertTrue(self.subject.audit_deconstruction_pptx(deck, specs, reviewed(), ["MAP_ASSET"])["ok"])
 
-    def test_editable_text_table_chart_and_element_names_pass(self):
+    def test_bitmap_audit_consumes_task1_contract_and_rejects_bad_contain(self):
         with tempfile.TemporaryDirectory() as directory:
-            directory = Path(directory)
-            ppt, slide, deck = self.make_presentation(directory)
-            text = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(3), Inches(.5))
-            text.name = "EL_TEXT"
-            text.text = "Editable conclusion"
-            table = slide.shapes.add_table(2, 2, Inches(1), Inches(2), Inches(3), Inches(1))
-            table.name = "EL_TABLE"
-            data = CategoryChartData(); data.categories = ["A", "B"]; data.add_series("S", (1, 2))
-            chart = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(5), Inches(2), Inches(3), Inches(2), data)
-            chart.name = "EL_CHART"
-            flow = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(1), Inches(4), Inches(1), Inches(.5)); flow.name = "EL_FLOW_NODE"
-            connector = slide.shapes.add_connector(1, Inches(2), Inches(4.25), Inches(3), Inches(4.25)); connector.name = "EL_FLOW_CONNECTOR"
-            ppt.save(deck)
-            specs = {"S01": {"elements": [{"element_id": "TEXT", "type": "text"}, {"element_id": "TABLE", "type": "matrix"}, {"element_id": "CHART", "type": "column_chart"}, {"element_id": "FLOW_NODE", "type": "flow"}, {"element_id": "FLOW_CONNECTOR", "type": "flow"}], "reconstruction_contract": {"text_decisions": [{"selected": "Editable conclusion"}]}}}
-            report = self.subject.audit_deconstruction_pptx(deck, specs, {"pages": {"S01": {}}})
-            self.assertTrue(report["ok"])
-
-    def test_native_basic_shape_prevents_large_body_asset_false_positive(self):
-        with tempfile.TemporaryDirectory() as directory:
-            directory = Path(directory)
-            image = directory / "body.png"
-            Image.new("RGB", (500, 300), "navy").save(image)
-            ppt, slide, deck = self.make_presentation(directory)
-            add_asset(slide, image, "EL_MAP", 0, .6, 12, 6.2)
-            rect = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(1), Inches(1), Inches(1), Inches(.5))
-            rect.name = "EL_RECT"
-            ppt.save(deck)
-            specs = {"S01": {"elements": [{"element_id": "MAP", "type": "asset"}, {"element_id": "RECT", "type": "rect"}], "reconstruction_contract": {"text_decisions": []}}}
-            report = self.subject.audit_deconstruction_pptx(deck, specs, {"pages": {"S01": {}}})
-            self.assertTrue(report["ok"])
-
-    def test_bitmap_contract_requires_one_correct_contained_picture_and_skeleton(self):
-        with tempfile.TemporaryDirectory() as directory:
-            directory = Path(directory)
-            image = directory / "body.png"
-            Image.new("RGB", (400, 200), "navy").save(image)
-            ppt, slide, deck = self.make_presentation(directory)
-            add_asset(slide, image, "EL_S01_BODY_BITMAP", 1, 1, 4, 2)
-            ppt.save(deck)
-            contract = {"pages": {"S01": {"asset_id": "S01_BODY_BITMAP", "asset_path": str(image), "asset_sha256": hashlib.sha256(image.read_bytes()).hexdigest(), "fit": "contain", "target": "runtime_body_box", "runtime_body_box": [1, 1, 4, 2]}}}
-            self.assertTrue(self.subject.audit_bitmap_pptx(deck, contract)["ok"])
-            contract["pages"]["S01"]["asset_sha256"] = "0" * 64
+            project, contract, asset = self.bitmap_contract(directory)
+            for case, geometry, crop in (("good", (.56, 1.1725, 11.13, 4.98), 0), ("small", (.56, 1.1725, 10, 4.48), 0), ("off_center", (.70, 1.1725, 11.13, 4.98), 0), ("stretch", (.56, 1.1725, 11.13, 4.7), 0), ("crop", (.56, 1.1725, 11.13, 4.98), 10000)):
+                with self.subTest(case=case):
+                    ppt, slide, deck = self.deck(directory)
+                    picture = add_picture(slide, asset, "EL_S01_BODY_BITMAP_1", *geometry)
+                    picture.crop_left = crop
+                    ppt.save(deck)
+                    report = self.subject.audit_bitmap_pptx(deck, contract)
+                    self.assertEqual(case == "good", report["ok"])
+            ppt, slide, deck = self.deck(directory); add_picture(slide, asset, "EL_S01_BODY_BITMAP_1"); add_picture(slide, asset, "EL_OTHER_1", 1, 1, 2, 1); ppt.save(deck)
             self.assertFalse(self.subject.audit_bitmap_pptx(deck, contract)["ok"])
-
-    def test_bitmap_contract_rejects_duplicates_and_stretching(self):
-        with tempfile.TemporaryDirectory() as directory:
-            directory = Path(directory)
-            image = directory / "body.png"
-            Image.new("RGB", (400, 200), "navy").save(image)
-            ppt, slide, deck = self.make_presentation(directory)
-            add_asset(slide, image, "EL_S01_BODY_BITMAP", 1, 1, 4, 3)
-            ppt.save(deck)
-            contract = {"pages": {"S01": {"asset_id": "S01_BODY_BITMAP", "asset_path": str(image), "asset_sha256": hashlib.sha256(image.read_bytes()).hexdigest(), "fit": "contain", "target": "runtime_body_box", "runtime_body_box": [1, 1, 4, 3]}}}
-            report = self.subject.audit_bitmap_pptx(deck, contract)
-            self.assertFalse(report["ok"])
-            self.assertIn("BITMAP_CONTRACT_INVALID", [item["code"] for item in report["blockers"]])
-            add_asset(slide, image, "EL_S01_BODY_BITMAP", 1, 1, 4, 2)
-            ppt.save(deck)
-            report = self.subject.audit_bitmap_pptx(deck, contract)
-            self.assertFalse(report["ok"])
-            self.assertIn("BITMAP_CONTRACT_INVALID", [item["code"] for item in report["blockers"]])
 
 
 if __name__ == "__main__":

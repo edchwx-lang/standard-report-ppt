@@ -257,6 +257,7 @@ def materialize_bitmap_assets(project_dir: str | Path) -> dict[str, Any]:
             image.crop(tuple(source_px)).save(asset)
         asset_path = asset.relative_to(project).as_posix()
         contract_pages[slide_id] = {
+            "asset_id": asset_id,
             "source_blueprint": review_record["blueprint_path"],
             "source_blueprint_sha256": review_record["blueprint_sha256"],
             "source_px": source_px,

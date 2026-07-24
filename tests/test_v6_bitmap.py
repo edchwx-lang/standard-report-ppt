@@ -129,6 +129,7 @@ class V6BitmapTests(unittest.TestCase):
             asset = project / page["asset_path"]
             self.assertTrue(asset.is_file())
             self.assertEqual([10, 20, 190, 90], page["source_px"])
+            self.assertEqual("S01_BODY_BITMAP", page["asset_id"])
             self.assertEqual("contain", page["fit"])
             self.assertEqual("runtime_body_box", page["target"])
             self.assertEqual("bitmap", contract["construction_mode"])

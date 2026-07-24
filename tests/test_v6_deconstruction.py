@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SKELETON_ROLES = {"chapter", "title", "core_point", "source", "page_number"}
 
 
 def load_module(name: str, path: Path):
@@ -16,108 +17,54 @@ def load_module(name: str, path: Path):
     return module
 
 
-def brief(mode: str = "deconstruct") -> dict:
-    return {
-        "schema_version": "6.0",
-        "pipeline_revision": "6.0.0",
-        "construction_mode": mode,
-    }
+def brief() -> dict:
+    return {"schema_version": "6.0", "pipeline_revision": "6.0.0", "construction_mode": "deconstruct"}
 
 
-def composite_spec() -> tuple[dict, dict]:
-    return (
-        {
-            "S01": {
-                "elements": [
-                    {"element_id": "COMPOSITE", "type": "asset", "asset_id": "COMPOSITE"}
-                ],
-                "reconstruction_contract": {
-                    "module_bindings": [
-                        {"module_id": "table", "element_ids": ["COMPOSITE"]},
-                        {"module_id": "chart", "element_ids": ["COMPOSITE"]},
-                    ],
-                    "text_decisions": [{"selected": "Editable conclusion"}],
-                },
-            }
-        },
-        {"pages": {"S01": {"visuals": []}}},
-    )
+def alignment(bindings, *, decisions=None, visuals=None) -> dict:
+    return {"pages": {"S01": {
+        "reconstruction_contract": {"module_bindings": bindings},
+        "text_decisions": decisions or [],
+        "visuals": visuals or [],
+    }}}
 
 
 class V6DeconstructionTests(unittest.TestCase):
     def setUp(self):
-        self.subject = load_module(
-            "v6_deconstruction", ROOT / "scripts" / "v6_deconstruction.py"
-        )
+        self.subject = load_module("v6_deconstruction", ROOT / "scripts" / "v6_deconstruction.py")
 
-    def test_non_v6_or_bitmap_is_a_passing_noop(self):
-        report = self.subject.validate_deconstruction_prebuild(
-            {"schema_version": "5.9"}, {}, {}, "windows_com_v584"
-        )
+    def test_non_v6_is_a_passing_noop(self):
+        report = self.subject.validate_deconstruction_prebuild({"schema_version": "5.9"}, {}, {}, "windows_com_v584")
         self.assertTrue(report["ok"])
-        self.assertEqual("pass", report["status"])
-        self.assertEqual([], report["blockers"])
 
-    def test_composite_body_asset_is_blocked_on_windows_and_mac(self):
-        specs, alignment = composite_spec()
+    def test_real_alignment_contract_blocks_composite_for_both_backends(self):
+        specs = {"S01": {"elements": [{"element_id": "COMPOSITE", "asset_id": "COMPOSITE", "type": "asset"}]}}
+        reviewed = alignment(
+            [{"module_id": "table", "element_ids": ["COMPOSITE"]}, {"module_id": "chart", "element_ids": ["COMPOSITE"]}],
+            decisions=[{"role": "body", "selected": "Editable body conclusion"}],
+        )
         for backend in ("windows_com_v584", "mac_python_pptx_v2"):
             with self.subTest(backend=backend):
-                report = self.subject.validate_deconstruction_prebuild(
-                    brief(), specs, alignment, backend
-                )
-                self.assertFalse(report["ok"])
-                self.assertIn(
-                    "DECONSTRUCTION_BODY_BITMAP_FORBIDDEN",
-                    [item["code"] for item in report["blockers"]],
-                )
+                report = self.subject.validate_deconstruction_prebuild(brief(), specs, reviewed, backend)
+                self.assertIn("DECONSTRUCTION_BODY_BITMAP_FORBIDDEN", [item["code"] for item in report["blockers"]])
 
-    def test_body_asset_and_classic_skeleton_composite_are_blocked(self):
-        specs = {
-            "S01": {
-                "elements": [
-                    {"element_id": "BODY", "type": "body_asset"},
-                    {"element_id": "COMPOSITE", "type": "asset"},
-                ],
-                "reconstruction_contract": {
-                    "module_bindings": [{"module_id": "body", "element_ids": ["COMPOSITE"]}]
-                },
-            }
-        }
-        report = self.subject.validate_deconstruction_prebuild(
-            brief(), specs, {"pages": {"S01": {}}}, "windows_com_v584"
+    def test_pure_map_allows_only_skeleton_text_decisions(self):
+        specs = {"S01": {"elements": [{"element_id": "MAP", "asset_id": "MAP_ASSET", "type": "asset"}]}}
+        skeleton = [{"role": role, "selected": role} for role in SKELETON_ROLES]
+        reviewed = alignment(
+            [{"module_id": "map", "element_ids": ["MAP"]}], decisions=skeleton,
+            visuals=[{"asset_id": "MAP_ASSET", "kind": "map"}],
         )
-        codes = [item["code"] for item in report["blockers"]]
-        self.assertIn("DECONSTRUCTION_BODY_BITMAP_FORBIDDEN", codes)
-
-    def test_single_subject_pure_visual_map_can_use_a_large_asset(self):
-        specs = {
-            "S01": {
-                "elements": [{"element_id": "MAP", "type": "asset", "asset_id": "MAP"}],
-                "reconstruction_contract": {
-                    "module_bindings": [{"module_id": "map", "element_ids": ["MAP"]}],
-                    "text_decisions": [],
-                },
-            }
-        }
-        alignment = {
-            "pages": {"S01": {"visuals": [{"asset_id": "MAP", "kind": "map"}]}}
-        }
-        report = self.subject.validate_deconstruction_prebuild(
-            brief(), specs, alignment, "mac_python_pptx_v2"
-        )
+        report = self.subject.validate_deconstruction_prebuild(brief(), specs, reviewed, "mac_python_pptx_v2")
         self.assertTrue(report["ok"])
-        self.assertEqual(["MAP"], report["allowed_large_visual_asset_ids"])
+        self.assertEqual(["MAP_ASSET"], report["allowed_large_visual_asset_ids"])
+        reviewed["pages"]["S01"]["text_decisions"].append({"role": "body", "selected": "Body copy"})
+        self.assertFalse(self.subject.validate_deconstruction_prebuild(brief(), specs, reviewed, "mac_python_pptx_v2")["ok"])
 
-    def test_mac_rejects_unsupported_element_types(self):
-        specs = {
-            "S01": {
-                "elements": [{"element_id": "X", "type": "unsupported_magic"}],
-                "reconstruction_contract": {"module_bindings": [{"module_id": "x", "element_ids": ["X"]}]},
-            }
-        }
-        report = self.subject.validate_deconstruction_prebuild(
-            brief(), specs, {"pages": {"S01": {}}}, "mac_python_pptx_v2"
-        )
+    def test_body_asset_and_unsupported_mac_type_are_blocked(self):
+        specs = {"S01": {"elements": [{"element_id": "BODY", "type": "body_asset"}, {"element_id": "X", "type": "magic"}]}}
+        report = self.subject.validate_deconstruction_prebuild(brief(), specs, alignment([]), "mac_python_pptx_v2")
+        self.assertIn("DECONSTRUCTION_BODY_BITMAP_FORBIDDEN", [item["code"] for item in report["blockers"]])
         self.assertIn("MAC_RECONSTRUCTION_UNSUPPORTED", [item["code"] for item in report["blockers"]])
 
 
