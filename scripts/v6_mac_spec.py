@@ -475,31 +475,74 @@ def _validate_style_contract(element: dict[str, Any]) -> list[str]:
         ):
             errors.append(f"{kind} style must be an integer from 1 to 48")
     if kind == "flow" and isinstance(element.get("steps"), list):
+        allowed_step_keys = {
+            "title",
+            "label",
+            "body",
+            "detail",
+        } | set(_FLOW_STEP_STYLE_KEYS)
         for index, step in enumerate(element["steps"]):
             if not isinstance(step, dict):
                 continue
-            unsupported = [
-                key
-                for key in step
-                if key in _STYLE_KEYS and key not in _FLOW_STEP_STYLE_KEYS
-            ]
+            unsupported = [key for key in step if key not in allowed_step_keys]
             errors.extend(
-                f"flow steps[{index}] does not support style field {key!r}"
+                f"flow steps[{index}] does not support field {key!r}"
                 for key in unsupported
             )
     if kind == "metric_strip" and isinstance(element.get("metrics"), list):
+        allowed_metric_keys = {"label", "value"} | set(_METRIC_STYLE_KEYS)
         for index, metric in enumerate(element["metrics"]):
             if not isinstance(metric, dict):
                 continue
             unsupported = [
-                key
-                for key in metric
-                if key in _STYLE_KEYS and key not in _METRIC_STYLE_KEYS
+                key for key in metric if key not in allowed_metric_keys
             ]
             errors.extend(
-                f"metric_strip metrics[{index}] does not support style field {key!r}"
+                f"metric_strip metrics[{index}] does not support field {key!r}"
                 for key in unsupported
             )
+    chart_types = {
+        "hbar_chart",
+        "column_chart",
+        "line_chart",
+        "combo_chart",
+        "donut_chart",
+        "grouped_hbar_chart",
+    }
+    if kind in chart_types and isinstance(element.get("data"), list):
+        if kind == "grouped_hbar_chart":
+            allowed_row_keys = {"label", "values"}
+        elif kind == "combo_chart":
+            allowed_row_keys = {"label", "value", "line_value"}
+        else:
+            allowed_row_keys = {"label", "value"}
+        for index, row in enumerate(element["data"]):
+            if not isinstance(row, dict):
+                continue
+            errors.extend(
+                f"{kind} data[{index}] does not support field {key!r}"
+                for key in row
+                if key not in allowed_row_keys
+            )
+    if kind in chart_types and "series" in element:
+        series = element["series"]
+        if kind != "grouped_hbar_chart":
+            errors.append(f"{kind} does not support series declarations")
+        elif not isinstance(series, list):
+            errors.append("grouped_hbar_chart series must be a list")
+        else:
+            for index, item in enumerate(series):
+                if not isinstance(item, dict):
+                    errors.append(
+                        f"grouped_hbar_chart series[{index}] must be a mapping"
+                    )
+                    continue
+                errors.extend(
+                    "grouped_hbar_chart "
+                    f"series[{index}] does not support field {key!r}"
+                    for key in item
+                    if key != "name"
+                )
     return errors
 
 

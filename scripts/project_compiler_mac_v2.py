@@ -185,6 +185,8 @@ def _blueprint_hashes(
     )
     if visual_manifest is not None and (
         visual_manifest.get("schema_version") != SCHEMA_VERSION
+        or visual_manifest.get("pipeline_revision") != PIPELINE_REVISION
+        or visual_manifest.get("construction_mode") != mode
         or not isinstance(visual_pages, dict)
         or set(visual_pages) != set(expected)
     ):
@@ -243,6 +245,47 @@ def _blueprint_hashes(
     return records
 
 
+def _assert_crop_matches(
+    blueprint_path: Path,
+    asset_path: Path,
+    source_px: Any,
+    label: str,
+) -> None:
+    from PIL import Image
+
+    if (
+        not isinstance(source_px, list)
+        or len(source_px) != 4
+        or any(
+            not isinstance(value, int) or isinstance(value, bool)
+            for value in source_px
+        )
+    ):
+        raise ValueError(f"{ERROR_ASSET}: {label} source_px is invalid")
+    try:
+        with Image.open(blueprint_path) as source, Image.open(asset_path) as asset:
+            left, top, right, bottom = source_px
+            if not (
+                0 <= left < right <= source.width
+                and 0 <= top < bottom <= source.height
+            ):
+                raise ValueError(
+                    f"{ERROR_ASSET}: {label} crop is outside blueprint"
+                )
+            expected = source.crop((left, top, right, bottom)).convert("RGBA")
+            actual = asset.convert("RGBA")
+            if (
+                expected.size != actual.size
+                or expected.tobytes() != actual.tobytes()
+            ):
+                raise ValueError(
+                    f"{ERROR_ASSET}: {label} asset pixels differ "
+                    "from locked blueprint crop"
+                )
+    except OSError as exc:
+        raise ValueError(f"{ERROR_ASSET}: {label} invalid image asset") from exc
+
+
 def _deconstruct_assets(
     project: Path, manifest: dict[str, Any], page_specs: dict[str, Any]
 ) -> dict[str, dict[str, Any]]:
@@ -257,9 +300,13 @@ def _deconstruct_assets(
                 continue
             asset_id = visual.get("asset_id")
             if not _safe_asset_id(asset_id):
-                raise ValueError(f"{slide_id}: aligned crop requires asset_id")
+                raise ValueError(
+                    f"{ERROR_ASSET}: {slide_id} aligned crop requires asset_id"
+                )
             if asset_id in records:
-                raise ValueError(f"duplicate asset_id: {asset_id}")
+                raise ValueError(
+                    f"{ERROR_ASSET}: duplicate asset_id {asset_id}"
+                )
             expected_path = f".build/assets/{slide_id}/{asset_id}.png"
             asset_path = _canonical_project_path(
                 project,
@@ -268,7 +315,15 @@ def _deconstruct_assets(
                 error_code=ERROR_ASSET,
             )
             if not asset_path.is_file():
-                raise FileNotFoundError(f"{slide_id}: missing aligned asset {asset_id}")
+                raise FileNotFoundError(
+                    f"{ERROR_ASSET}: {slide_id} missing aligned asset {asset_id}"
+                )
+            _assert_crop_matches(
+                project / "blueprints" / f"{slide_id}.png",
+                asset_path,
+                visual.get("source_px"),
+                f"{slide_id}/{asset_id}",
+            )
             records[asset_id] = {
                 "slide_id": slide_id,
                 "asset_id": asset_id,

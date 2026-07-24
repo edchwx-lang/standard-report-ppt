@@ -92,6 +92,8 @@ class V6MacCompileTests(unittest.TestCase):
             json.dumps(
                 {
                     "schema_version": "6.0",
+                    "pipeline_revision": "6.0.0",
+                    "construction_mode": mode,
                     "pages": {
                         "S01": {
                             "design_draft_path": ".build/design_drafts/S01.png",
@@ -168,7 +170,8 @@ class V6MacCompileTests(unittest.TestCase):
         project = self._project("deconstruct")
         asset_dir = project / ".build" / "assets" / "S01"
         asset_dir.mkdir(parents=True)
-        Image.new("RGB", (400, 100), "blue").save(asset_dir / "A01.png")
+        with Image.open(project / "blueprints" / "S01.png") as blueprint:
+            blueprint.crop((0, 0, 400, 100)).save(asset_dir / "A01.png")
         elements = [
             {
                 "type": "text",
@@ -762,6 +765,87 @@ class V6MacCompileTests(unittest.TestCase):
         path.write_text(json.dumps(payload), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "MAC_BLUEPRINT_HASH_MISMATCH"):
             compiler.compile_project(project)
+
+    def test_compiler_validates_visual_manifest_revision_and_mode(self):
+        compiler = load_module(
+            "v6_mac_compiler_visual_manifest_contract",
+            ROOT / "scripts" / "project_compiler_mac_v2.py",
+        )
+        for field, value in (
+            ("schema_version", "5.9"),
+            ("pipeline_revision", "6.0.1"),
+            ("construction_mode", "bitmap"),
+        ):
+            project = self._project("deconstruct")
+            self._materialize_deconstruct(
+                project,
+                [
+                    {
+                        "type": "text",
+                        "element_id": "TEXT",
+                        "text": "Locked",
+                        "box": [0, 0, 2, 1],
+                    }
+                ],
+            )
+            path = project / ".build" / "visual_manifest.json"
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload[field] = value
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(
+                    ValueError, "MAC_V6_CONTRACT_INVALID"
+                ):
+                    compiler.compile_project(project)
+
+    def test_deconstruct_crop_must_equal_reviewed_locked_blueprint_pixels(self):
+        compiler = load_module(
+            "v6_mac_compiler_crop_pixels",
+            ROOT / "scripts" / "project_compiler_mac_v2.py",
+        )
+        for mutation in ("replace", "missing"):
+            project = self._project("deconstruct")
+            asset_dir = project / ".build" / "assets" / "S01"
+            asset_dir.mkdir(parents=True)
+            asset = asset_dir / "A01.png"
+            with Image.open(project / "blueprints" / "S01.png") as blueprint:
+                blueprint.crop((10, 20, 410, 120)).save(asset)
+            self._materialize_deconstruct(
+                project,
+                [
+                    {
+                        "type": "asset",
+                        "element_id": "MAP",
+                        "module_id": "map",
+                        "asset_id": "A01",
+                        "box": [0, 0, 2, 1],
+                        "fit": "contain",
+                    }
+                ],
+            )
+            visual_path = project / ".build" / "visual_manifest.json"
+            visual = json.loads(visual_path.read_text(encoding="utf-8"))
+            visual["pages"]["S01"]["visuals"] = [
+                {
+                    "treatment": "crop",
+                    "asset_id": "A01",
+                    "kind": "map",
+                    "source_px": [10, 20, 410, 120],
+                    "target_box_in": [0, 0, 2, 1],
+                    "target_coord_space": "body",
+                }
+            ]
+            visual_path.write_text(json.dumps(visual), encoding="utf-8")
+            if mutation == "replace":
+                Image.new("RGB", (400, 100), "red").save(asset)
+            else:
+                asset.unlink()
+            with self.subTest(mutation=mutation):
+                with self.assertRaisesRegex(
+                    (ValueError, FileNotFoundError),
+                    "^MAC_ASSET_CONTRACT_MISMATCH:",
+                ):
+                    compiler.compile_project(project)
 
     def test_compiler_rederives_mac_spec_and_checks_materialization_report(self):
         compiler = load_module(

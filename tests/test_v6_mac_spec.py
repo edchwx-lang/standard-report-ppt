@@ -257,6 +257,25 @@ class V6MacSpecTests(unittest.TestCase):
                     {"title": "C", "body": "D"},
                 ],
             },
+            {
+                "type": "column_chart",
+                "element_id": "CHART_DATA_COLOR",
+                "box": [0, 0, 2, 1],
+                "data": [{"label": "A", "value": 1, "color": "#FF0000"}],
+            },
+            {
+                "type": "column_chart",
+                "element_id": "CHART_DATA_UNKNOWN",
+                "box": [0, 0, 2, 1],
+                "data": [{"label": "A", "value": 1, "font_color": "#FF0000"}],
+            },
+            {
+                "type": "grouped_hbar_chart",
+                "element_id": "CHART_SERIES_COLOR",
+                "box": [0, 0, 2, 1],
+                "series": [{"name": "A", "color": "#FF0000"}],
+                "data": [{"label": "Row", "values": [1]}],
+            },
         )
         for element in invalid_elements:
             with self.subTest(element=element["element_id"]):
