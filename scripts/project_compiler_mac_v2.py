@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import pprint
+import re
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,11 @@ from typing import Any
 SCHEMA_VERSION = "6.0"
 PIPELINE_REVISION = "6.0.0"
 BUILDER_BACKEND = "mac_python_pptx_v2"
+ERROR_UNSUPPORTED = "MAC_RECONSTRUCTION_UNSUPPORTED"
+ERROR_CONTRACT = "MAC_V6_CONTRACT_INVALID"
+ERROR_ASSET = "MAC_ASSET_CONTRACT_MISMATCH"
+ERROR_BLUEPRINT = "MAC_BLUEPRINT_HASH_MISMATCH"
+_SAFE_ASSET_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
 def sha256_file(path: str | Path) -> str:
@@ -43,36 +49,135 @@ def _read_json(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _required_payload(project: Path, relative: str) -> Any:
+    path = project / relative
+    if not path.is_file():
+        raise FileNotFoundError(f"{ERROR_CONTRACT}: missing {relative}")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{ERROR_CONTRACT}: invalid {relative}") from exc
+
+
+def _required_json(project: Path, relative: str) -> dict[str, Any]:
+    payload = _required_payload(project, relative)
+    if not isinstance(payload, dict):
+        raise ValueError(f"{ERROR_CONTRACT}: {relative} must be a mapping")
+    return payload
+
+
+def _safe_asset_id(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(_SAFE_ASSET_ID.fullmatch(value))
+        and ".." not in value
+    )
+
+
+def _canonical_project_path(
+    project: Path,
+    relative: Any,
+    expected: str,
+    *,
+    error_code: str,
+) -> Path:
+    if not isinstance(relative, str) or relative != expected:
+        raise ValueError(f"{error_code}: expected {expected}")
+    candidate = Path(relative)
+    if candidate.is_absolute():
+        raise ValueError(f"{error_code}: absolute path forbidden")
+    resolved_project = project.resolve()
+    resolved = (resolved_project / candidate).resolve()
+    if resolved != resolved_project and resolved_project not in resolved.parents:
+        raise ValueError(f"{error_code}: path escapes project")
+    return resolved
+
+
 def _contract_hashes(project: Path, mode: str) -> dict[str, str]:
     files = {
-        "authoring_bundle": ".build/authoring_bundle.json",
-        "blueprint_alignment": ".build/blueprint_alignment.json",
         "slides": ".build/slides.json",
-        "visual_manifest": ".build/visual_manifest.json",
-        "mac_spec_report": ".build/mac_spec_report.json",
+        "formal_blueprint_manifest": ".build/formal_blueprint_manifest.json",
     }
     if mode == "deconstruct":
-        files["page_specs"] = ".build/page_specs.json"
-        files["mac_page_specs"] = ".build/mac_page_specs.json"
+        files.update(
+            {
+                "authoring_bundle": ".build/authoring_bundle.json",
+                "blueprint_alignment": ".build/blueprint_alignment.json",
+                "visual_manifest": ".build/visual_manifest.json",
+                "mac_spec_report": ".build/mac_spec_report.json",
+                "page_specs": ".build/page_specs.json",
+                "mac_page_specs": ".build/mac_page_specs.json",
+            }
+        )
     else:
         files["bitmap_page_specs"] = ".build/bitmap_page_specs.json"
         files["bitmap_contract"] = ".build/bitmap_contract.json"
-    return {
-        f"{name}_sha256": sha256_file(project / relative)
-        for name, relative in files.items()
-        if (project / relative).is_file()
-    }
+    hashes: dict[str, str] = {}
+    for name, relative in files.items():
+        path = project / relative
+        if not path.is_file():
+            raise FileNotFoundError(f"{ERROR_CONTRACT}: missing {relative}")
+        hashes[f"{name}_sha256"] = sha256_file(path)
+    return hashes
 
 
-def _blueprint_hashes(project: Path, expected: list[str]) -> dict[str, dict[str, str]]:
+def _blueprint_hashes(
+    project: Path,
+    expected: list[str],
+    formal_manifest: dict[str, Any],
+    visual_manifest: dict[str, Any] | None,
+) -> dict[str, dict[str, str]]:
+    if (
+        formal_manifest.get("schema_version") != SCHEMA_VERSION
+        or not isinstance(formal_manifest.get("pages"), dict)
+        or set(formal_manifest["pages"]) != set(expected)
+    ):
+        raise ValueError(f"{ERROR_CONTRACT}: invalid formal blueprint manifest")
+    visual_pages = (
+        visual_manifest.get("pages")
+        if isinstance(visual_manifest, dict)
+        else None
+    )
+    if visual_manifest is not None and (
+        visual_manifest.get("schema_version") != SCHEMA_VERSION
+        or not isinstance(visual_pages, dict)
+        or set(visual_pages) != set(expected)
+    ):
+        raise ValueError(f"{ERROR_CONTRACT}: invalid visual manifest")
     records: dict[str, dict[str, str]] = {}
     for slide_id in expected:
-        path = project / "blueprints" / f"{slide_id}.png"
-        if not path.is_file():
-            raise FileNotFoundError(f"{slide_id}: immutable blueprint is missing")
+        locked = formal_manifest["pages"].get(slide_id)
+        if not isinstance(locked, dict):
+            raise ValueError(f"{ERROR_CONTRACT}: {slide_id} blueprint lock")
+        expected_path = f"blueprints/{slide_id}.png"
+        path = _canonical_project_path(
+            project,
+            locked.get("formal_blueprint_path"),
+            expected_path,
+            error_code=ERROR_BLUEPRINT,
+        )
+        locked_hash = locked.get("formal_blueprint_sha256")
+        if (
+            not isinstance(locked_hash, str)
+            or len(locked_hash) != 64
+            or not path.is_file()
+            or sha256_file(path) != locked_hash
+        ):
+            raise ValueError(f"{ERROR_BLUEPRINT}: {slide_id}")
+        if visual_pages is not None:
+            visual = visual_pages.get(slide_id)
+            if (
+                not isinstance(visual, dict)
+                or visual.get("formal_blueprint_path") != expected_path
+                or visual.get("formal_blueprint_sha256") != locked_hash
+                or visual.get("design_draft_sha256") != locked_hash
+            ):
+                raise ValueError(
+                    f"{ERROR_BLUEPRINT}: {slide_id} visual lock mismatch"
+                )
         records[slide_id] = {
-            "path": path.relative_to(project).as_posix(),
-            "sha256": sha256_file(path),
+            "path": expected_path,
+            "sha256": locked_hash,
         }
     return records
 
@@ -90,11 +195,17 @@ def _deconstruct_assets(
             if visual.get("treatment", visual.get("disposition")) != "crop":
                 continue
             asset_id = visual.get("asset_id")
-            if not isinstance(asset_id, str) or not asset_id:
+            if not _safe_asset_id(asset_id):
                 raise ValueError(f"{slide_id}: aligned crop requires asset_id")
             if asset_id in records:
                 raise ValueError(f"duplicate asset_id: {asset_id}")
-            asset_path = project / ".build" / "assets" / slide_id / f"{asset_id}.png"
+            expected_path = f".build/assets/{slide_id}/{asset_id}.png"
+            asset_path = _canonical_project_path(
+                project,
+                expected_path,
+                expected_path,
+                error_code=ERROR_ASSET,
+            )
             if not asset_path.is_file():
                 raise FileNotFoundError(f"{slide_id}: missing aligned asset {asset_id}")
             records[asset_id] = {
@@ -137,16 +248,36 @@ def _bitmap_assets(
             raise ValueError(f"{slide_id}: invalid bitmap asset contract")
         asset_id = raw.get("asset_id")
         relative = raw.get("asset_path")
-        if not isinstance(asset_id, str) or not asset_id or not isinstance(relative, str):
-            raise ValueError(f"{slide_id}: bitmap asset identity is invalid")
-        path = project / relative
+        if not _safe_asset_id(asset_id):
+            raise ValueError(f"{ERROR_ASSET}: {slide_id} asset identity")
+        expected_path = f".build/assets/{slide_id}/{asset_id}.png"
+        path = _canonical_project_path(
+            project,
+            relative,
+            expected_path,
+            error_code=ERROR_ASSET,
+        )
+        expected_blueprint = f"blueprints/{slide_id}.png"
+        blueprint = _canonical_project_path(
+            project,
+            raw.get("source_blueprint"),
+            expected_blueprint,
+            error_code=ERROR_BLUEPRINT,
+        )
+        locked = contract["_locked_blueprints"][slide_id]
         if (
             not path.is_file()
             or raw.get("asset_sha256") != sha256_file(path)
             or raw.get("fit") != "contain"
             or raw.get("target") != "runtime_body_box"
         ):
-            raise ValueError(f"{slide_id}: bitmap asset contract is stale")
+            raise ValueError(f"{ERROR_ASSET}: {slide_id} bitmap asset is stale")
+        if (
+            not blueprint.is_file()
+            or raw.get("source_blueprint_sha256") != locked["sha256"]
+            or sha256_file(blueprint) != locked["sha256"]
+        ):
+            raise ValueError(f"{ERROR_BLUEPRINT}: {slide_id} bitmap source")
         if asset_id in records:
             raise ValueError(f"duplicate bitmap asset_id: {asset_id}")
         records[asset_id] = dict(raw, slide_id=slide_id)
@@ -163,11 +294,11 @@ def compile_project(project_dir: str | Path) -> Path:
         or brief.get("production_mode") != "blueprint"
         or brief.get("construction_mode") not in {"deconstruct", "bitmap"}
     ):
-        raise ValueError("Mac v2 compiler requires V6.0.0 blueprint construction")
+        raise ValueError(
+            f"{ERROR_UNSUPPORTED}: Mac v2 compiler requires V6.0.0 blueprint construction"
+        )
     mode = str(brief["construction_mode"])
-    slides = json.loads(
-        (project / ".build" / "slides.json").read_text(encoding="utf-8")
-    )
+    slides = _required_payload(project, ".build/slides.json")
     if not isinstance(slides, list):
         raise ValueError("slides.json must contain a list")
     expected = [
@@ -177,7 +308,7 @@ def compile_project(project_dir: str | Path) -> Path:
     if [slide.get("slide_id") for slide in slides] != expected:
         raise ValueError("canonical slide order mismatch")
     specs_name = "mac_page_specs.json" if mode == "deconstruct" else "bitmap_page_specs.json"
-    page_specs = _read_json(project / ".build" / specs_name)
+    page_specs = _required_json(project, f".build/{specs_name}")
     if sorted(page_specs) != expected:
         raise ValueError("canonical page-spec coverage mismatch")
     normalizer = _load_module(
@@ -190,17 +321,45 @@ def compile_project(project_dir: str | Path) -> Path:
             "MAC_RECONSTRUCTION_UNSUPPORTED: compiler input is not normalized"
         )
 
-    manifest_path = project / ".build" / "visual_manifest.json"
-    manifest = _read_json(manifest_path) if manifest_path.is_file() else {"pages": {}}
+    formal_manifest = _required_json(
+        project, ".build/formal_blueprint_manifest.json"
+    )
+    manifest = (
+        _required_json(project, ".build/visual_manifest.json")
+        if mode == "deconstruct"
+        else (
+            _read_json(project / ".build" / "visual_manifest.json")
+            if (project / ".build" / "visual_manifest.json").is_file()
+            else None
+        )
+    )
     if mode == "deconstruct":
+        alignment = _required_json(project, ".build/blueprint_alignment.json")
+        authoring = _required_json(project, ".build/authoring_bundle.json")
+        if (
+            alignment.get("schema_version") != SCHEMA_VERSION
+            or not isinstance(alignment.get("pages"), dict)
+            or set(alignment["pages"]) != set(expected)
+            or authoring.get("schema_version") != SCHEMA_VERSION
+        ):
+            raise ValueError(f"{ERROR_CONTRACT}: invalid deconstruction contracts")
+    blueprint_hashes = _blueprint_hashes(
+        project,
+        expected,
+        formal_manifest,
+        manifest,
+    )
+    if mode == "deconstruct":
+        assert isinstance(manifest, dict)
         asset_registry = _deconstruct_assets(project, manifest, page_specs)
     else:
+        bitmap_contract = _required_json(project, ".build/bitmap_contract.json")
+        bitmap_contract["_locked_blueprints"] = blueprint_hashes
         asset_registry = _bitmap_assets(
             project,
-            _read_json(project / ".build" / "bitmap_contract.json"),
+            bitmap_contract,
             expected,
         )
-    blueprint_hashes = _blueprint_hashes(project, expected)
     contract_hashes = _contract_hashes(project, mode)
 
     template_path = skill / "assets" / "company_template.pptx"

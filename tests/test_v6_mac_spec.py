@@ -38,6 +38,13 @@ class V6MacSpecTests(unittest.TestCase):
                         "text": "Editable",
                         "color": 0x112233,
                         "align": -4108,
+                        "valign": 3,
+                        "fill": "F0F1F2",
+                        "line": "001122",
+                        "margin_left": 0.08,
+                        "margin_right": 0.06,
+                        "margin_top": 0.03,
+                        "margin_bottom": 0.02,
                         "data": [{"label": "A", "value": 2}],
                     },
                     {
@@ -61,7 +68,7 @@ class V6MacSpecTests(unittest.TestCase):
                         "element_id": "S01_COMBO",
                         "box": [7.2, 1.0, 2.0, 1.0],
                         "data": [
-                            {"label": "2025", "column": 10, "line": 20},
+                            {"label": "2025", "value": 10, "line_value": 20},
                         ],
                     },
                 ]
@@ -78,12 +85,15 @@ class V6MacSpecTests(unittest.TestCase):
         self.assertEqual("body", text["coord_space"])
         self.assertEqual("#332211", text["color"])
         self.assertEqual("center", text["align"])
+        self.assertEqual("middle", text["valign"])
+        self.assertEqual("#F0F1F2", text["fill"])
+        self.assertEqual("#001122", text["line"])
         self.assertEqual("absolute", rect["coord_space"])
         self.assertEqual("#ABCDEF", rect["fill"])
         self.assertEqual("#001122", rect["line_color"])
         self.assertEqual("middle", rect["vertical_alignment"])
         self.assertEqual("contain", asset["fit"])
-        self.assertEqual(20, combo["data"][0]["line"])
+        self.assertEqual(20, combo["data"][0]["line_value"])
         self.assertTrue(report["ok"])
         self.assertEqual("deconstruct", report["construction_mode"])
 
@@ -135,6 +145,134 @@ class V6MacSpecTests(unittest.TestCase):
         repeated["S01"]["elements"][0]["color"] = "not-a-color"
         with self.assertRaisesRegex(ValueError, "MAC_RECONSTRUCTION_UNSUPPORTED"):
             self.module.normalize_mac_page_specs(repeated, "deconstruct")
+
+    def test_real_contract_payloads_are_normalized_and_malformed_payloads_block(self):
+        valid = {
+            "S01": {
+                "elements": [
+                    {
+                        "type": "combo_chart",
+                        "element_id": "COMBO",
+                        "box": [0, 0, 3, 2],
+                        "data": [
+                            {"label": "2025", "value": 10, "line_value": 20},
+                            {"label": "2026", "value": 12, "line_value": 18},
+                        ],
+                    },
+                    {
+                        "type": "flow",
+                        "element_id": "FLOW",
+                        "box": [0, 2, 6, 1],
+                        "steps": [
+                            {"title": "Discover", "body": "Evidence"},
+                            {"label": "Decide", "detail": "Action"},
+                        ],
+                    },
+                    {
+                        "type": "matrix",
+                        "element_id": "TABLE",
+                        "box": [6, 0, 4, 2],
+                        "headers": ["A", "B"],
+                        "rows": [["x", "y"], ["m", "n"]],
+                    },
+                    {
+                        "type": "metric_strip",
+                        "element_id": "METRICS",
+                        "box": [0, 3.1, 6, 0.8],
+                        "metrics": [{"label": "Growth", "value": "20%"}],
+                    },
+                    {
+                        "type": "text_card",
+                        "element_id": "CARD",
+                        "box": [6, 2.1, 4, 1.2],
+                        "title": "Finding",
+                        "body": "Evidence-backed conclusion",
+                    },
+                ]
+            }
+        }
+        normalized, _ = self.module.normalize_mac_page_specs(
+            valid, "deconstruct"
+        )
+        self.assertEqual(
+            20,
+            normalized["S01"]["elements"][0]["data"][0]["line_value"],
+        )
+        bad_elements = (
+            {
+                "type": "column_chart",
+                "element_id": "BAD_CHART",
+                "box": [0, 0, 2, 1],
+                "data": [{"label": "A", "value": "not-numeric"}],
+            },
+            {
+                "type": "combo_chart",
+                "element_id": "BAD_COMBO",
+                "box": [0, 0, 2, 1],
+                "data": [{"label": "A", "value": 1}],
+            },
+            {
+                "type": "flow",
+                "element_id": "ONE_STEP",
+                "box": [0, 0, 2, 1],
+                "steps": [{"title": "Only"}],
+            },
+            {
+                "type": "matrix",
+                "element_id": "RAGGED",
+                "box": [0, 0, 2, 1],
+                "headers": ["A", "B"],
+                "rows": [["x"]],
+            },
+            {
+                "type": "text_card",
+                "element_id": "EMPTY_CARD",
+                "box": [0, 0, 2, 1],
+                "title": "Finding",
+            },
+        )
+        for element in bad_elements:
+            with self.subTest(element=element["element_id"]):
+                with self.assertRaisesRegex(
+                    ValueError, "MAC_RECONSTRUCTION_UNSUPPORTED"
+                ):
+                    self.module.normalize_mac_page_specs(
+                        {"S01": {"elements": [element]}}, "deconstruct"
+                    )
+
+    def test_asset_ids_and_invalid_construction_mode_are_blocked_early(self):
+        for asset_id in ("../../outside", "..", "/absolute", r"C:\absolute"):
+            element = {
+                "type": "asset",
+                "element_id": "ASSET",
+                "asset_id": asset_id,
+                "box": [0, 0, 2, 1],
+            }
+            with self.subTest(asset_id=asset_id):
+                with self.assertRaisesRegex(
+                    ValueError, "MAC_RECONSTRUCTION_UNSUPPORTED"
+                ):
+                    self.module.normalize_mac_page_specs(
+                        {"S01": {"elements": [element]}}, "deconstruct"
+                    )
+        with tempfile.TemporaryDirectory(prefix="v6_mac_mode_") as directory:
+            project = Path(directory)
+            (project / ".build").mkdir()
+            (project / "project_brief.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "6.0",
+                        "pipeline_revision": "6.0.0",
+                        "production_mode": "blueprint",
+                        "construction_mode": "fast",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                ValueError, "MAC_RECONSTRUCTION_UNSUPPORTED"
+            ):
+                self.module.materialize_mac_page_specs(project)
 
     def test_bitmap_accepts_exactly_one_runtime_body_asset_per_page(self):
         valid = {
@@ -200,6 +338,7 @@ class V6MacSpecTests(unittest.TestCase):
                         {
                             "type": "text",
                             "element_id": "S01_TEXT",
+                            "text": "Editable",
                             "box": [0.1, 0.2, 1.0, 0.4],
                             "color": "123456",
                         }

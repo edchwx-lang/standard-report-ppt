@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,7 @@ _COLOR_KEYS = frozenset(
         "fill",
         "body_fill",
         "line_color",
+        "title_fill",
         "title_color",
         "value_color",
         "label_color",
@@ -46,8 +48,9 @@ _COLOR_KEYS = frozenset(
 )
 _HORIZONTAL_ALIGNMENT_KEYS = frozenset({"align", "alignment", "text_align"})
 _VERTICAL_ALIGNMENT_KEYS = frozenset(
-    {"vertical_align", "vertical_alignment", "vertical_anchor"}
+    {"valign", "vertical_align", "vertical_alignment", "vertical_anchor"}
 )
+_SAFE_ASSET_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 _HORIZONTAL_ALIGNMENT = {
     -4152: "right",
     -4131: "left",
@@ -136,7 +139,7 @@ def _normalize_nested(value: Any, parent_key: str | None = None) -> Any:
             elif (
                 key == "line"
                 and child is not None
-                and value.get("type") in {"rect", "oval"}
+                and value.get("type") in {"rect", "oval", "text"}
             ):
                 output[key] = _normalize_color(child)
             elif key in _HORIZONTAL_ALIGNMENT_KEYS and child is not None:
@@ -189,6 +192,164 @@ def _issue(slide_id: str, element_id: str, message: str) -> dict[str, Any]:
         "element_id": element_id,
         "message": message,
     }
+
+
+def _number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _nonempty_text(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _safe_asset_id(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(_SAFE_ASSET_ID.fullmatch(value))
+        and ".." not in value
+    )
+
+
+def _validate_payload(element: dict[str, Any]) -> list[str]:
+    kind = element.get("type")
+    errors: list[str] = []
+    if kind == "section_header" and not _nonempty_text(
+        element.get("text", element.get("title"))
+    ):
+        errors.append("section_header requires non-empty text/title")
+    elif kind == "text":
+        if not isinstance(element.get("text"), str):
+            errors.append("text element requires text")
+        for field in (
+            "margin_left",
+            "margin_right",
+            "margin_top",
+            "margin_bottom",
+        ):
+            if field in element and (
+                not _number(element[field]) or float(element[field]) < 0
+            ):
+                errors.append(f"text {field} must be a non-negative number")
+    elif kind == "oval":
+        if "text" in element and not isinstance(element["text"], str):
+            errors.append("oval text must be a string")
+    elif kind in {"line", "arrow"} and (
+        "weight" in element
+        and (not _number(element["weight"]) or float(element["weight"]) <= 0)
+    ):
+        errors.append(f"{kind} weight must be a positive number")
+    elif kind == "text_card":
+        if not _nonempty_text(element.get("title")):
+            errors.append("text_card requires a non-empty title")
+        if not _nonempty_text(element.get("body")):
+            errors.append("text_card requires a non-empty body")
+    elif kind == "metric_strip":
+        metrics = element.get("metrics")
+        if not isinstance(metrics, list) or not metrics:
+            errors.append("metric_strip requires non-empty metrics")
+        else:
+            for index, metric in enumerate(metrics):
+                if (
+                    not isinstance(metric, dict)
+                    or not _nonempty_text(metric.get("label"))
+                    or "value" not in metric
+                    or not isinstance(metric.get("value"), (str, int, float))
+                    or isinstance(metric.get("value"), bool)
+                ):
+                    errors.append(
+                        f"metric_strip metrics[{index}] requires label and value"
+                    )
+    elif kind in {
+        "hbar_chart",
+        "column_chart",
+        "line_chart",
+        "combo_chart",
+        "donut_chart",
+        "grouped_hbar_chart",
+    }:
+        rows = element.get("data")
+        if not isinstance(rows, list) or not rows:
+            errors.append(f"{kind} requires non-empty data")
+        else:
+            grouped_width: int | None = None
+            total = 0.0
+            for index, row in enumerate(rows):
+                if not isinstance(row, dict):
+                    errors.append(f"{kind} data[{index}] must be a mapping")
+                    continue
+                if not _nonempty_text(row.get("label")):
+                    errors.append(f"{kind} data[{index}] requires label")
+                if kind == "grouped_hbar_chart":
+                    values = row.get("values")
+                    if (
+                        not isinstance(values, list)
+                        or not values
+                        or not all(_number(item) for item in values)
+                    ):
+                        errors.append(
+                            f"{kind} data[{index}] requires numeric values"
+                        )
+                    elif grouped_width is None:
+                        grouped_width = len(values)
+                    elif len(values) != grouped_width:
+                        errors.append(f"{kind} series width must be rectangular")
+                    continue
+                if not _number(row.get("value")):
+                    errors.append(f"{kind} data[{index}] requires numeric value")
+                else:
+                    total += float(row["value"])
+                if kind == "combo_chart":
+                    line_value = row.get("line_value")
+                    if line_value is None:
+                        line_value = row.get("line", row.get("value2"))
+                    if not _number(line_value):
+                        errors.append(
+                            f"combo_chart data[{index}] requires numeric line_value"
+                        )
+                    else:
+                        row["line_value"] = line_value
+                        row.pop("line", None)
+                        row.pop("value2", None)
+            if kind == "donut_chart" and total <= 0:
+                errors.append("donut_chart values must sum to a positive number")
+    elif kind == "flow":
+        steps = element.get("steps")
+        if not isinstance(steps, list) or not 2 <= len(steps) <= 6:
+            errors.append("flow requires two to six steps")
+        else:
+            for index, step in enumerate(steps):
+                if not isinstance(step, dict):
+                    errors.append(f"flow steps[{index}] must be a mapping")
+                    continue
+                if not _nonempty_text(step.get("title", step.get("label"))):
+                    errors.append(
+                        f"flow steps[{index}] requires presentable title/label"
+                    )
+                for field in ("body", "detail"):
+                    if field in step and not isinstance(step[field], str):
+                        errors.append(f"flow steps[{index}] {field} must be text")
+    elif kind == "matrix":
+        headers = element.get("headers")
+        rows = element.get("rows")
+        if (
+            not isinstance(headers, list)
+            or not headers
+            or not all(_nonempty_text(item) for item in headers)
+        ):
+            errors.append("matrix requires non-empty text headers")
+        if not isinstance(rows, list) or not rows:
+            errors.append("matrix requires non-empty rows")
+        elif isinstance(headers, list):
+            for index, row in enumerate(rows):
+                if not isinstance(row, list) or len(row) != len(headers):
+                    errors.append(
+                        f"matrix rows[{index}] must match the header width"
+                    )
+    elif kind in {"asset", "body_asset"} and not _safe_asset_id(
+        element.get("asset_id")
+    ):
+        errors.append("asset_id is unsafe")
+    return errors
 
 
 def _report(
@@ -300,6 +461,13 @@ def normalize_mac_page_specs(
                         )
                     )
                     continue
+                payload_errors = _validate_payload(element)
+                if payload_errors:
+                    blockers.extend(
+                        _issue(slide_id, element_id, message)
+                        for message in payload_errors
+                    )
+                    continue
                 normalized_elements.append(element)
                 continue
 
@@ -334,6 +502,13 @@ def normalize_mac_page_specs(
                     )
                     continue
                 element["fit"] = "contain"
+            payload_errors = _validate_payload(element)
+            if payload_errors:
+                blockers.extend(
+                    _issue(slide_id, element_id, message)
+                    for message in payload_errors
+                )
+                continue
             normalized_elements.append(element)
         if construction_mode == "bitmap" and body_assets != 1:
             blockers.append(
@@ -365,8 +540,12 @@ def materialize_mac_page_specs(project_dir: str | Path) -> dict[str, Any]:
     if (
         brief.get("schema_version") != SCHEMA_VERSION
         or brief.get("pipeline_revision") != PIPELINE_REVISION
+        or brief.get("production_mode") != "blueprint"
+        or brief.get("construction_mode") not in {"deconstruct", "bitmap"}
     ):
-        raise ValueError("Mac v2 specification requires V6.0.0")
+        raise ValueError(
+            f"{ERROR_UNSUPPORTED}: Mac v2 specification requires V6.0.0"
+        )
     mode = brief.get("construction_mode")
     source_name = "page_specs.json" if mode == "deconstruct" else "bitmap_page_specs.json"
     source_path = project / ".build" / source_name

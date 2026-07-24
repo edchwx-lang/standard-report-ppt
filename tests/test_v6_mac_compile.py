@@ -56,6 +56,7 @@ class V6MacCompileTests(unittest.TestCase):
         Image.new("RGB", (1600, 900), "#ddeeff").save(
             project / "blueprints" / "S01.png"
         )
+        blueprint_hash = sha256_file(project / "blueprints" / "S01.png")
         source = project / "source.txt"
         source.write_text("source", encoding="utf-8")
         brief = {
@@ -90,9 +91,9 @@ class V6MacCompileTests(unittest.TestCase):
                     "pages": {
                         "S01": {
                             "design_draft_path": "blueprints/S01.png",
-                            "design_draft_sha256": sha256_file(
-                                project / "blueprints" / "S01.png"
-                            ),
+                            "design_draft_sha256": blueprint_hash,
+                            "formal_blueprint_path": "blueprints/S01.png",
+                            "formal_blueprint_sha256": blueprint_hash,
                             "visuals": [],
                         }
                     },
@@ -102,7 +103,24 @@ class V6MacCompileTests(unittest.TestCase):
         )
         for name, payload in (
             ("authoring_bundle.json", {"schema_version": "6.0"}),
-            ("blueprint_alignment.json", {"schema_version": "6.0", "pages": {}}),
+            (
+                "blueprint_alignment.json",
+                {"schema_version": "6.0", "pages": {"S01": {}}},
+            ),
+            (
+                "formal_blueprint_manifest.json",
+                {
+                    "schema_version": "6.0",
+                    "pages": {
+                        "S01": {
+                            "design_draft_path": "blueprints/S01.png",
+                            "design_draft_sha256": blueprint_hash,
+                            "formal_blueprint_path": "blueprints/S01.png",
+                            "formal_blueprint_sha256": blueprint_hash,
+                        }
+                    },
+                },
+            ),
         ):
             (build / name).write_text(json.dumps(payload), encoding="utf-8")
         return project
@@ -142,6 +160,26 @@ class V6MacCompileTests(unittest.TestCase):
                 "module_id": "claim",
                 "text": "Editable body",
                 "box": [0.1, 0.1, 2.0, 0.5],
+                "fill": "#F0F1F2",
+                "line": "#112233",
+                "align": 2,
+                "valign": 3,
+                "margin_left": 0.08,
+                "margin_right": 0.06,
+                "margin_top": 0.03,
+                "margin_bottom": 0.02,
+            },
+            {
+                "type": "oval",
+                "element_id": "E_OVAL",
+                "module_id": "node",
+                "text": "Editable oval",
+                "box": [11.0, 0.1, 1.0, 0.7],
+                "fill": "#FFFFFF",
+                "line": "#7391B3",
+                "color": "#1E386B",
+                "align": 2,
+                "valign": 3,
             },
             {
                 "type": "matrix",
@@ -166,8 +204,8 @@ class V6MacCompileTests(unittest.TestCase):
                 "element_id": "E_COMBO",
                 "module_id": "combo",
                 "data": [
-                    {"label": "2025", "column": 10, "line": 20},
-                    {"label": "2026", "column": 12, "line": 18},
+                    {"label": "2025", "value": 10, "line_value": 20},
+                    {"label": "2026", "value": 12, "line_value": 18},
                 ],
                 "box": [5.5, 0.1, 2.8, 1.7],
             },
@@ -175,7 +213,11 @@ class V6MacCompileTests(unittest.TestCase):
                 "type": "flow",
                 "element_id": "E_FLOW",
                 "module_id": "flow",
-                "steps": ["First", "Second", "Third"],
+                "steps": [
+                    {"title": "First", "body": "Evidence"},
+                    {"label": "Second", "detail": "Decision"},
+                    {"title": "Third", "body": "Action"},
+                ],
                 "box": [0.1, 2.1, 5.5, 0.8],
             },
             {
@@ -219,6 +261,20 @@ class V6MacCompileTests(unittest.TestCase):
         slide = prs.slides[0]
         names = [shape.name for shape in slide.shapes]
         self.assertTrue(any(name.startswith("EL_E_TEXT_") for name in names))
+        text_shape = next(
+            shape
+            for shape in slide.shapes
+            if shape.name.startswith("EL_E_TEXT_")
+        )
+        self.assertEqual("Editable body", text_shape.text)
+        self.assertAlmostEqual(0.08, inches(text_shape.text_frame.margin_left), places=2)
+        self.assertEqual(3, int(text_shape.text_frame.vertical_anchor))
+        oval = next(
+            shape
+            for shape in slide.shapes
+            if shape.name.startswith("EL_E_OVAL_")
+        )
+        self.assertIn("Editable oval", oval.text)
         self.assertTrue(
             any(
                 shape.name.startswith("EL_E_TABLE_") and shape.has_table
@@ -245,6 +301,11 @@ class V6MacCompileTests(unittest.TestCase):
         self.assertTrue(
             any(shape.shape_type != MSO_SHAPE_TYPE.LINE for shape in flow[1:])
         )
+        flow_text = "\n".join(
+            shape.text for shape in flow if getattr(shape, "has_text_frame", False)
+        )
+        self.assertIn("Evidence", flow_text)
+        self.assertIn("Decision", flow_text)
         picture = next(
             shape
             for shape in slide.shapes
@@ -264,6 +325,31 @@ class V6MacCompileTests(unittest.TestCase):
                 for element in generated_module.PAGE_SPECS["S01"]["elements"]
             )
         )
+        probe = Presentation()
+        probe_slide = probe.slides.add_slide(probe.slide_layouts[6])
+        with self.assertRaisesRegex(
+            ValueError, "MAC_RECONSTRUCTION_UNSUPPORTED"
+        ):
+            generated_module.render_page_spec(
+                probe_slide,
+                {
+                    "elements": [
+                        {
+                            "type": "column_chart",
+                            "element_id": "BAD_RUNTIME_CHART",
+                            "box": [0, 0, 2, 1],
+                            "coord_space": "absolute",
+                            "data": ["not-a-mapping"],
+                        }
+                    ]
+                },
+                {"x": 0, "y": 0, "w": 10, "h": 5},
+                project,
+                "S01",
+            )
+        generated_module.ASSET_REGISTRY["A01"]["asset_path"] = "../../outside.png"
+        with self.assertRaisesRegex(ValueError, "MAC_ASSET_CONTRACT_MISMATCH"):
+            generated_module._asset_path(project, "S01", "A01")
         compile_report = json.loads(
             (project / ".build" / "compile_report.json").read_text(
                 encoding="utf-8"
@@ -386,6 +472,233 @@ class V6MacCompileTests(unittest.TestCase):
             ROOT / "scripts" / "project_compiler_mac_v2.py",
         )
         with self.assertRaisesRegex(ValueError, "6.0.0"):
+            compiler.compile_project(project)
+
+    def test_compiler_requires_locked_deconstruction_contracts(self):
+        compiler = load_module(
+            "v6_mac_compiler_locked_contracts",
+            ROOT / "scripts" / "project_compiler_mac_v2.py",
+        )
+        for missing in (
+            "formal_blueprint_manifest.json",
+            "visual_manifest.json",
+            "blueprint_alignment.json",
+            "authoring_bundle.json",
+        ):
+            project = self._project("deconstruct")
+            specs = {
+                "S01": {
+                    "elements": [
+                        {
+                            "type": "text",
+                            "element_id": "TEXT",
+                            "text": "Locked",
+                            "box": [0, 0, 2, 1],
+                        }
+                    ]
+                }
+            }
+            (project / ".build" / "page_specs.json").write_text(
+                json.dumps(specs), encoding="utf-8"
+            )
+            load_module(
+                f"v6_mac_spec_missing_{missing}",
+                ROOT / "scripts" / "v6_mac_spec.py",
+            ).materialize_mac_page_specs(project)
+            (project / ".build" / missing).unlink()
+            with self.subTest(missing=missing):
+                with self.assertRaisesRegex(
+                    (ValueError, FileNotFoundError), "MAC_V6_CONTRACT_INVALID"
+                ):
+                    compiler.compile_project(project)
+
+        project = self._project("deconstruct")
+        (project / ".build" / "page_specs.json").write_text(
+            json.dumps(
+                {
+                    "S01": {
+                        "elements": [
+                            {
+                                "type": "text",
+                                "element_id": "TEXT",
+                                "text": "Locked",
+                                "box": [0, 0, 2, 1],
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        load_module(
+            "v6_mac_spec_tamper",
+            ROOT / "scripts" / "v6_mac_spec.py",
+        ).materialize_mac_page_specs(project)
+        Image.new("RGB", (1600, 900), "red").save(
+            project / "blueprints" / "S01.png"
+        )
+        with self.assertRaisesRegex(ValueError, "MAC_BLUEPRINT_HASH_MISMATCH"):
+            compiler.compile_project(project)
+
+    def test_bitmap_contract_rejects_unsafe_paths_and_missing_lock(self):
+        compiler = load_module(
+            "v6_mac_compiler_bitmap_security",
+            ROOT / "scripts" / "project_compiler_mac_v2.py",
+        )
+        for relative in (
+            "../../outside.png",
+            "C:/absolute.png",
+            ".build/assets/S01/wrong.png",
+        ):
+            project = self._project("bitmap")
+            asset_id = "S01_BODY_BITMAP"
+            asset_dir = project / ".build" / "assets" / "S01"
+            asset_dir.mkdir(parents=True)
+            asset = asset_dir / f"{asset_id}.png"
+            Image.new("RGB", (400, 200), "blue").save(asset)
+            (project / ".build" / "bitmap_page_specs.json").write_text(
+                json.dumps(
+                    {
+                        "S01": {
+                            "elements": [
+                                {
+                                    "type": "body_asset",
+                                    "element_id": asset_id,
+                                    "asset_id": asset_id,
+                                    "fit": "contain",
+                                    "target": "runtime_body_box",
+                                }
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            contract = {
+                "schema_version": "6.0",
+                "pipeline_revision": "6.0.0",
+                "construction_mode": "bitmap",
+                "pages": {
+                    "S01": {
+                        "asset_id": asset_id,
+                        "asset_path": relative,
+                        "asset_sha256": sha256_file(asset),
+                        "source_blueprint": "blueprints/S01.png",
+                        "source_blueprint_sha256": sha256_file(
+                            project / "blueprints" / "S01.png"
+                        ),
+                        "fit": "contain",
+                        "target": "runtime_body_box",
+                    }
+                },
+            }
+            (project / ".build" / "bitmap_contract.json").write_text(
+                json.dumps(contract), encoding="utf-8"
+            )
+            with self.subTest(relative=relative):
+                with self.assertRaisesRegex(
+                    ValueError, "MAC_ASSET_CONTRACT_MISMATCH"
+                ):
+                    compiler.compile_project(project)
+
+        project = self._project("bitmap")
+        (project / ".build" / "bitmap_page_specs.json").write_text(
+            json.dumps(
+                {
+                    "S01": {
+                        "elements": [
+                            {
+                                "type": "body_asset",
+                                "element_id": "S01_BODY_BITMAP",
+                                "asset_id": "S01_BODY_BITMAP",
+                                "fit": "contain",
+                                "target": "runtime_body_box",
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        (project / ".build" / "formal_blueprint_manifest.json").unlink()
+        with self.assertRaisesRegex(
+            (ValueError, FileNotFoundError), "MAC_V6_CONTRACT_INVALID"
+        ):
+            compiler.compile_project(project)
+
+        project = self._project("bitmap")
+        (project / ".build" / "bitmap_page_specs.json").write_text(
+            json.dumps(
+                {
+                    "S01": {
+                        "elements": [
+                            {
+                                "type": "body_asset",
+                                "element_id": "S01_BODY_BITMAP",
+                                "asset_id": "S01_BODY_BITMAP",
+                                "fit": "contain",
+                                "target": "runtime_body_box",
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(
+            (ValueError, FileNotFoundError), "MAC_V6_CONTRACT_INVALID"
+        ):
+            compiler.compile_project(project)
+
+    def test_bitmap_contract_source_blueprint_hash_is_locked(self):
+        compiler = load_module(
+            "v6_mac_compiler_bitmap_source_lock",
+            ROOT / "scripts" / "project_compiler_mac_v2.py",
+        )
+        project = self._project("bitmap")
+        asset_id = "S01_BODY_BITMAP"
+        asset_dir = project / ".build" / "assets" / "S01"
+        asset_dir.mkdir(parents=True)
+        asset = asset_dir / f"{asset_id}.png"
+        Image.new("RGB", (400, 200), "blue").save(asset)
+        (project / ".build" / "bitmap_page_specs.json").write_text(
+            json.dumps(
+                {
+                    "S01": {
+                        "elements": [
+                            {
+                                "type": "body_asset",
+                                "element_id": asset_id,
+                                "asset_id": asset_id,
+                                "fit": "contain",
+                                "target": "runtime_body_box",
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        contract = {
+            "schema_version": "6.0",
+            "pipeline_revision": "6.0.0",
+            "construction_mode": "bitmap",
+            "pages": {
+                "S01": {
+                    "asset_id": asset_id,
+                    "asset_path": f".build/assets/S01/{asset_id}.png",
+                    "asset_sha256": sha256_file(asset),
+                    "source_blueprint": "blueprints/S01.png",
+                    "source_blueprint_sha256": "0" * 64,
+                    "fit": "contain",
+                    "target": "runtime_body_box",
+                }
+            },
+        }
+        (project / ".build" / "bitmap_contract.json").write_text(
+            json.dumps(contract), encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ValueError, "MAC_BLUEPRINT_HASH_MISMATCH"):
             compiler.compile_project(project)
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -55,6 +56,7 @@ LIGHT_BLUE = "#E6EBF1"
 LIGHT_GRAY = "#D9D9D9"
 WHITE = "#FFFFFF"
 BLACK = "#000000"
+_SAFE_ASSET_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
 def sha256_file(path: str | Path) -> str:
@@ -81,6 +83,25 @@ def paragraph_alignment(value):
     except KeyError as exc:
         raise ValueError(
             f"MAC_RECONSTRUCTION_UNSUPPORTED: alignment {value!r}"
+        ) from exc
+
+
+def vertical_alignment(value):
+    if value is None:
+        return MSO_ANCHOR.TOP
+    if value in (MSO_ANCHOR.TOP, MSO_ANCHOR.MIDDLE, MSO_ANCHOR.BOTTOM):
+        return value
+    mapping = {
+        "top": MSO_ANCHOR.TOP,
+        "middle": MSO_ANCHOR.MIDDLE,
+        "center": MSO_ANCHOR.MIDDLE,
+        "bottom": MSO_ANCHOR.BOTTOM,
+    }
+    try:
+        return mapping[str(value).strip().lower()]
+    except KeyError as exc:
+        raise ValueError(
+            f"MAC_RECONSTRUCTION_UNSUPPORTED: vertical alignment {value!r}"
         ) from exc
 
 
@@ -121,11 +142,27 @@ def _contain_box(path: Path, box: list[float]) -> list[float]:
 
 def _asset_path(project_dir: Path, slide_id: str, asset_id: str) -> Path:
     record = ASSET_REGISTRY.get(asset_id)
-    if not isinstance(record, dict) or record.get("slide_id") != slide_id:
+    if (
+        not isinstance(asset_id, str)
+        or not _SAFE_ASSET_ID.fullmatch(asset_id)
+        or ".." in asset_id
+        or not isinstance(record, dict)
+        or record.get("slide_id") != slide_id
+    ):
         raise ValueError(
             f"MAC_ASSET_CONTRACT_MISMATCH: {slide_id}/{asset_id}"
         )
-    path = project_dir / ".build" / "assets" / slide_id / f"{asset_id}.png"
+    expected = f".build/assets/{slide_id}/{asset_id}.png"
+    if record.get("asset_path") != expected:
+        raise ValueError(
+            f"MAC_ASSET_CONTRACT_MISMATCH: {slide_id}/{asset_id} path"
+        )
+    root = project_dir.resolve()
+    path = (root / expected).resolve()
+    if root not in path.parents:
+        raise ValueError(
+            f"MAC_ASSET_CONTRACT_MISMATCH: {slide_id}/{asset_id} escapes project"
+        )
     if not path.is_file():
         raise FileNotFoundError(f"MAC_ASSET_MISSING: {path}")
     if record.get("asset_sha256") != sha256_file(path):
@@ -177,17 +214,33 @@ def add_textbox(
     bold: bool = False,
     name: str | None = None,
     align=PP_ALIGN.LEFT,
+    valign=MSO_ANCHOR.TOP,
+    fill: str | None = None,
+    line: str | None = None,
+    margin_left: float = 0.04,
+    margin_right: float = 0.04,
+    margin_top: float = 0.0,
+    margin_bottom: float = 0.0,
 ):
     x, y, width, height = box
     shape = slide.shapes.add_textbox(
         Inches(x), Inches(y), Inches(width), Inches(height)
     )
     shape.text_frame.clear()
-    shape.text_frame.margin_left = Inches(0.04)
-    shape.text_frame.margin_right = Inches(0.04)
-    shape.text_frame.margin_top = 0
-    shape.text_frame.margin_bottom = 0
-    shape.text_frame.vertical_anchor = MSO_ANCHOR.TOP
+    if fill is None:
+        shape.fill.background()
+    else:
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = rgb(fill)
+    if line is None:
+        shape.line.fill.background()
+    else:
+        shape.line.color.rgb = rgb(line)
+    shape.text_frame.margin_left = Inches(float(margin_left))
+    shape.text_frame.margin_right = Inches(float(margin_right))
+    shape.text_frame.margin_top = Inches(float(margin_top))
+    shape.text_frame.margin_bottom = Inches(float(margin_bottom))
+    shape.text_frame.vertical_anchor = vertical_alignment(valign)
     paragraph = shape.text_frame.paragraphs[0]
     paragraph.alignment = paragraph_alignment(align)
     run = paragraph.add_run()
@@ -233,6 +286,27 @@ def _add_shape(slide, shape_type, box, *, fill=WHITE, line=LIGHT_GRAY, name=None
     if name:
         set_shape_name(shape, name)
     return shape
+
+
+def _set_shape_text(shape, element: dict) -> None:
+    frame = shape.text_frame
+    frame.clear()
+    frame.margin_left = Inches(float(element.get("margin_left", 0.04)))
+    frame.margin_right = Inches(float(element.get("margin_right", 0.04)))
+    frame.margin_top = Inches(float(element.get("margin_top", 0.02)))
+    frame.margin_bottom = Inches(float(element.get("margin_bottom", 0.02)))
+    frame.vertical_anchor = vertical_alignment(
+        element.get("valign", element.get("vertical_alignment", "middle"))
+    )
+    paragraph = frame.paragraphs[0]
+    paragraph.alignment = paragraph_alignment(element.get("align", "center"))
+    run = paragraph.add_run()
+    run.text = str(element.get("text", ""))
+    run.font.name = FONT_NAME
+    run.font.size = Pt(float(element.get("font_size", 10)))
+    run.font.bold = bool(element.get("bold", True))
+    run.font.color.rgb = rgb(str(element.get("color", NAVY)))
+    set_east_asian_font(run, FONT_NAME)
 
 
 def add_skeleton(slide, spec: dict, page_number: int) -> dict[str, float]:
@@ -369,18 +443,59 @@ def add_flow_mac(slide, element: dict, box: list[float]):
         )
         set_arrow_end(connector)
     for index, raw_step in enumerate(steps):
-        step = raw_step if isinstance(raw_step, dict) else {"label": raw_step}
+        if not isinstance(raw_step, dict):
+            raise ValueError(
+                "MAC_RECONSTRUCTION_UNSUPPORTED: flow steps must be mappings"
+            )
+        step = raw_step
         left = x + index * (step_width + gap)
+        header_height = min(0.30, max(0.22, height * 0.30))
         _add_shape(
-            slide, MSO_SHAPE.ROUNDED_RECTANGLE,
+            slide,
+            MSO_SHAPE.ROUNDED_RECTANGLE,
             [left, y, step_width, height],
-            fill=str(step.get("fill", "#F5F5F5")),
+            fill=str(step.get("body_fill", step.get("fill", LIGHT_BLUE))),
             line=str(step.get("line_color", BLUE)),
         )
+        _add_shape(
+            slide,
+            MSO_SHAPE.RECTANGLE,
+            [left, y, step_width, header_height],
+            fill=str(step.get("title_fill", MID_BLUE)),
+            line=None,
+        )
         add_textbox(
-            slide, str(step.get("title", step.get("label", ""))),
-            [left + 0.05, y + 0.05, max(0.05, step_width - 0.1), max(0.05, height - 0.1)],
-            size=9, color=BLACK, bold=True, align=PP_ALIGN.CENTER,
+            slide,
+            str(step.get("title", step.get("label", ""))),
+            [
+                left + 0.05,
+                y + 0.02,
+                max(0.05, step_width - 0.1),
+                max(0.05, header_height - 0.04),
+            ],
+            size=9,
+            color=WHITE,
+            bold=True,
+            align=PP_ALIGN.CENTER,
+            valign=MSO_ANCHOR.MIDDLE,
+            margin_left=0,
+            margin_right=0,
+        )
+        add_textbox(
+            slide,
+            str(step.get("body", step.get("detail", ""))),
+            [
+                left + 0.07,
+                y + header_height + 0.04,
+                max(0.05, step_width - 0.14),
+                max(0.05, height - header_height - 0.08),
+            ],
+            size=8,
+            color=BLACK,
+            align=PP_ALIGN.LEFT,
+            valign=MSO_ANCHOR.TOP,
+            margin_left=0,
+            margin_right=0,
         )
 
 
@@ -440,12 +555,21 @@ def add_category_chart(slide, kind: str, element: dict, box: list[float]):
 def add_combo_chart(slide, element: dict, box: list[float]):
     columns = dict(element)
     columns["data"] = [
-        {"label": row.get("label", ""), "value": row.get("column", row.get("value", 0))}
+        {
+            "label": row.get("label", ""),
+            "value": row.get("value", row.get("column", 0)),
+        }
         for row in element.get("data", [])
     ]
     lines = dict(element)
     lines["data"] = [
-        {"label": row.get("label", ""), "value": row.get("line", row.get("value2", 0))}
+        {
+            "label": row.get("label", ""),
+            "value": row.get(
+                "line_value",
+                row.get("line", row.get("value2", 0)),
+            ),
+        }
         for row in element.get("data", [])
     ]
     column_frame = add_category_chart(slide, "column_chart", columns, box)
@@ -480,7 +604,7 @@ def _name_element_shapes(slide, first_index: int, element_id: str) -> list[str]:
     return names
 
 
-def render_page_spec(
+def _render_page_spec_unsafe(
     slide, page_spec: dict, body: dict[str, float], project_dir: Path, slide_id: str
 ) -> None:
     elements = page_spec.get("elements")
@@ -536,15 +660,38 @@ def render_page_spec(
                     color=str(element.get("color", BLACK)),
                     bold=bool(element.get("bold", False)),
                     align=element.get("align", "left"),
+                    valign=element.get(
+                        "valign",
+                        element.get("vertical_alignment", "top"),
+                    ),
+                    fill=(
+                        str(element["fill"])
+                        if element.get("fill") is not None
+                        else None
+                    ),
+                    line=(
+                        str(element["line"])
+                        if element.get("line") is not None
+                        else None
+                    ),
+                    margin_left=float(element.get("margin_left", 0.04)),
+                    margin_right=float(element.get("margin_right", 0.04)),
+                    margin_top=float(element.get("margin_top", 0.02)),
+                    margin_bottom=float(element.get("margin_bottom", 0.02)),
                 )
             elif kind in {"rect", "oval"}:
-                _add_shape(
+                line_value = element.get(
+                    "line", element.get("line_color", NAVY)
+                )
+                shape = _add_shape(
                     slide,
                     MSO_SHAPE.RECTANGLE if kind == "rect" else MSO_SHAPE.OVAL,
                     absolute,
                     fill=str(element.get("fill", WHITE)),
-                    line=str(element.get("line", element.get("line_color", NAVY))),
+                    line=str(line_value) if line_value is not None else None,
                 )
+                if kind == "oval" and "text" in element:
+                    _set_shape_text(shape, element)
             elif kind in {"line", "arrow"}:
                 line = slide.shapes.add_connector(
                     MSO_CONNECTOR.STRAIGHT,
@@ -654,6 +801,19 @@ def render_page_spec(
         shape_names = _name_element_shapes(slide, first_index, element_id)
         if kind in {"asset", "body_asset"}:
             ASSET_INSERTIONS[-1]["shape_names"] = shape_names
+
+
+def render_page_spec(
+    slide, page_spec: dict, body: dict[str, float], project_dir: Path, slide_id: str
+) -> None:
+    try:
+        _render_page_spec_unsafe(slide, page_spec, body, project_dir, slide_id)
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        if str(exc).startswith("MAC_"):
+            raise
+        raise ValueError(
+            f"MAC_RECONSTRUCTION_UNSUPPORTED: {slide_id}: {exc}"
+        ) from exc
 
 
 # __PAGE_BUILDERS__
