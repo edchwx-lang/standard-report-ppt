@@ -3,10 +3,10 @@
   "release_label": "V6.0.0-rc1",
   "pipeline_revision": "6.0.0",
   "baseline_commit": "1579a38",
-  "implementation_head": "945a4b5354f2db2b31073e40539efca3b091cb0b",
+  "implementation_head": "27667a6e9e4d911d27250c4dc9e73574ee8aa139",
   "self_hash_excluded": true,
   "files": [
-    {"path":"README.md","change":"modified","before_sha256":"c533fdbc6e2b1b5583cd0a078aad5e1b93053fcb8096b50f26df6e5ab3e9b71b","after_sha256":"a15bee441c9e7a4f52dcbb4fa8b1d45531a9e533463235e297357b92195e81d7"},
+    {"path":"README.md","change":"modified","before_sha256":"c533fdbc6e2b1b5583cd0a078aad5e1b93053fcb8096b50f26df6e5ab3e9b71b","after_sha256":"204d9cf582bf13998003f3e4f648c04ac2dc6836a77a3aa8956d1db7ca2e7639"},
     {"path":"SKILL.md","change":"modified","before_sha256":"d339c2f6380d8990dfc05ef81cfe381d957d6dfe004f70c09a32bc888fd7d012","after_sha256":"950a03aa1eca2ce5312cf253f1c2392cfedd340b8a0cef238fc70f1d36bd1f24"},
     {"path":"agents/openai.yaml","change":"modified","before_sha256":"be114a3fe0706e562dc4ede92302df50a3bf1eb3f0f9c690cea3b93ecb32aceb","after_sha256":"eadda619787117ece8c2ac3eaffb3e7b51ef54a370b6353892447cdaccde4623"},
     {"path":"assets/direct_blueprint_generator_template.py","change":"modified","before_sha256":"cd289a1a0356a51639348177408d9039844507d342e9e50e9e358095f14614b6","after_sha256":"d100578aab9ea88a0579a78a71742dabe0a4f0bddc0760c29ee53369bea60e0e"},
@@ -20,7 +20,8 @@
     {"path":"scripts/pack_delivery.py","change":"modified","before_sha256":"479093e9d34e33339ec6dd3a09c43219dd6e2256a73591d18125a3365f772839","after_sha256":"075011c8bed9bb7a3d4e1a540546862d54dd99ac903d1b582fb2b23f83361d77"},
     {"path":"scripts/project_compiler.py","change":"modified","before_sha256":"34ef92869585c06acfbdd069f4dd424d8d52b054b4d36c60f5505a51f8a0e18c","after_sha256":"a83fde47af2e3f260a4470d8869aeec9cee50defdf93f86a707d51b9a81a4fb9"},
     {"path":"scripts/project_compiler_mac_v2.py","change":"added","before_sha256":null,"after_sha256":"54ffc8279c38997aadbf1c3435617696e6ce4ced91f6d9018363cde59c5d145f"},
-    {"path":"scripts/project_pipeline.py","change":"modified","before_sha256":"9cb9326e4dcad6987dc46ce2cbf7198dc00f2a139f766a9b934de3504973db82","after_sha256":"0b9ae63a1e36a9514f4bf46e63777e0fc259b33d502a2c67ae07e388220ab484"},
+    {"path":"scripts/project_pipeline.py","change":"modified","before_sha256":"9cb9326e4dcad6987dc46ce2cbf7198dc00f2a139f766a9b934de3504973db82","after_sha256":"969a005c60faec05e98f0b8d2efb9cf8b766610c8722448ce55cc7d5239171a0"},
+    {"path":"scripts/v596_visual_review.py","change":"modified","before_sha256":"9130dd5b6d581cec5a9a3beaa4dc81f105f35898706dc9fd69d969f544cec669","after_sha256":"6c7568b43f27fbcccc33f2d2e9000f68a8fc7f5de2a575d93d950b95d58a924e"},
     {"path":"scripts/v591_reconstruction_contract.py","change":"modified","before_sha256":"de79970561a03a7ce98e82ea143ffc6b840923c90cb69297f10e8f9237d9ca31","after_sha256":"666282e02aac6c8e546f6bb80c6533a02eab53d34cc5b58d21ffdc9d78660508"},
     {"path":"scripts/v6_bitmap.py","change":"added","before_sha256":null,"after_sha256":"9c30bb8b509199f6bf632abee72c00ededbe2fe5f643aa6445235ae75707b458"},
     {"path":"scripts/v6_blueprint_gate.py","change":"added","before_sha256":null,"after_sha256":"248ccb02dca1e41b9edb3b8f085d5567bc495e8047e1079ae97ba85074e24bff"},
@@ -36,7 +37,7 @@
     {"path":"tests/test_v6_editability_audit.py","change":"added","before_sha256":null,"after_sha256":"255571560d2d9498acf2152ec0d7a166fcc2a21c991ca21faa49b59d9f95af13"},
     {"path":"tests/test_v6_mac_compile.py","change":"added","before_sha256":null,"after_sha256":"b20200a6fb7175733128b2aab8cf68492be51685c840c53c7c527ad97b5b90a9"},
     {"path":"tests/test_v6_mac_spec.py","change":"added","before_sha256":null,"after_sha256":"170d8c742733fd37a65359c95a79a6378d0498c1123aa5831d1baf69114d1df8"},
-    {"path":"tests/test_v6_pipeline.py","change":"added","before_sha256":null,"after_sha256":"8f95c8b3449912fe8cf1828a4fdb275e34026859396ead439e2d53a418f9f533"},
+    {"path":"tests/test_v6_pipeline.py","change":"added","before_sha256":null,"after_sha256":"593ea551e1bab1773e0889a19c74cf913ddd79d9a73170d7b3b5040e2d5a257d"},
     {"path":"tests/test_v6_windows_compile.py","change":"added","before_sha256":null,"after_sha256":"dcd6f37dc1900da40d29d3c8d2cf3336ffdb2555eef9db95627dee52c7b723b3"}
   ]
 }
