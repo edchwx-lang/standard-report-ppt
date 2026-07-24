@@ -561,6 +561,22 @@ def _validate_v6_project(
         errors.append("V6 PPTX is missing")
     if generator_path.parent != project_dir or generator_path.name != "generate_deck.py":
         errors.append("V6 generator must be <project>/generate_deck.py")
+    compile_path = project_dir / ".build" / "compile_report.json"
+    compile_report = (
+        json.loads(compile_path.read_text(encoding="utf-8"))
+        if compile_path.is_file()
+        else {}
+    )
+    if (
+        compile_report.get("schema_version") != "6.0"
+        or compile_report.get("pipeline_revision") != "6.0.0"
+        or compile_report.get("construction_mode") != mode
+        or compile_report.get("builder_backend") != runtime.get("builder_backend")
+        or compile_report.get("generator") != "generate_deck.py"
+        or not generator_path.is_file()
+        or compile_report.get("generator_sha256") != sha256_file(generator_path)
+    ):
+        errors.append("V6 generator does not match compile_report.json")
     try:
         compiler_path = Path(__file__).with_name("project_compiler.py")
         spec = importlib.util.spec_from_file_location(

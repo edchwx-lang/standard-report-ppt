@@ -302,3 +302,33 @@ def materialize_bitmap_assets(
     _write_json_atomic(project / CONTRACT_PATH, contract)
     _write_json_atomic(project / PAGE_SPECS_PATH, page_specs)
     return contract
+
+
+def materialize_bitmap_batch_assets(
+    project_dir: str | Path, slide_ids: list[str]
+) -> None:
+    """Materialize only one recovery batch; whole-deck contracts are written later."""
+
+    project = Path(project_dir).resolve()
+    alignment = _read_alignment(project)
+    errors = validate_bitmap_alignment(project, alignment)
+    if errors:
+        raise ValueError("\n".join(errors))
+    review, review_errors = _read_review(project)
+    if review is None or review_errors:
+        raise ValueError(ERROR_REVIEW_RECORD)
+    records, errors = _review_errors(project, review)
+    if errors:
+        raise ValueError("\n".join(errors))
+    requested = set(slide_ids)
+    if not requested or not requested.issubset(records):
+        raise ValueError("V6_BITMAP_BATCH_PAGE_SET_INVALID")
+    for slide_id in slide_ids:
+        review_record = records[slide_id]
+        blueprint = project / review_record["blueprint_path"]
+        source_px = alignment["pages"][slide_id]["source_px"]
+        asset_id = f"{slide_id}_BODY_BITMAP"
+        asset = project / ".build" / "assets" / slide_id / f"{asset_id}.png"
+        asset.parent.mkdir(parents=True, exist_ok=True)
+        with Image.open(blueprint) as image:
+            image.crop(tuple(source_px)).convert("RGBA").save(asset)

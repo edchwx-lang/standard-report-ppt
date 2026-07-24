@@ -66,6 +66,49 @@ def _normalize_reports(project: Path, construction_mode: str) -> None:
         _write(path, payload)
 
 
+def _transport_events(project: Path, slide_id: str) -> list[dict[str, Any]]:
+    path = project / ".build" / "imagegen_transport_report.json"
+    if not path.is_file():
+        return []
+    report = _read(path)
+    history = report.get("history", [])
+    events = [
+        item
+        for item in history
+        if isinstance(item, dict) and item.get("slide_id") == slide_id
+    ]
+    if events:
+        return events
+    current = report.get("pages", {}).get(slide_id)
+    return [current] if isinstance(current, dict) else []
+
+
+def _assert_next_transport_event(
+    project: Path, slide_id: str, transport_attempt_count: int
+) -> None:
+    events = _transport_events(project, slide_id)
+    if not events:
+        expected = 1
+    else:
+        current = events[-1]
+        terminal = (
+            current.get("artifact_received") is True
+            or current.get("error_code")
+            in {IMAGEGEN_UNAVAILABLE, BLUEPRINT_TRANSPORT_FAILED}
+            or current.get("resumable") is False
+        )
+        if terminal:
+            raise ValueError(f"{slide_id}: ImageGen transport state is terminal")
+        prior = current.get("transport_attempt_count")
+        if not isinstance(prior, int):
+            raise ValueError(f"{slide_id}: ImageGen transport history is invalid")
+        expected = prior + 1
+    if transport_attempt_count != expected or expected not in {1, 2}:
+        raise ValueError(
+            f"{slide_id}: next transport attempt must be {expected}"
+        )
+
+
 def record_artifact(
     project_dir: str | Path,
     slide_id: str,
@@ -75,6 +118,7 @@ def record_artifact(
 ) -> dict[str, Any]:
     project = Path(project_dir).resolve()
     brief = _brief(project)
+    _assert_next_transport_event(project, slide_id, transport_attempt_count)
     result = _load_v59().record_artifact(
         project,
         slide_id,
@@ -102,6 +146,7 @@ def record_failure(
 ) -> dict[str, Any]:
     project = Path(project_dir).resolve()
     brief = _brief(project)
+    _assert_next_transport_event(project, slide_id, transport_attempt_count)
     result = _load_v59().record_failure(
         project,
         slide_id,

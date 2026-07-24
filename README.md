@@ -85,7 +85,7 @@ flowchart TD
 
     O --> P{自动检测操作系统}
     P -->|Windows| Q[windows_com_v584]
-    P -->|macOS| R[mac_python_pptx_v1]
+    P -->|macOS，仅 V5.9 兼容| R[mac_python_pptx_v1]
     Q --> S[PowerPoint COM 本地构建与渲染]
     R --> T[python-pptx 本地构建]
     T --> U[PowerPoint for Mac 优先渲染<br/>LibreOffice 作为回退]
@@ -133,14 +133,14 @@ git clone https://github.com/edchwx-lang/standard-report-ppt.git "$HOME\.codex\s
 git -C "$HOME\.codex\skills\standard-report-ppt" pull
 ```
 
-#### macOS
+#### macOS（V6 默认路径）
 
 运行路径：
 
 ```text
 统一内容与蓝图
   → 平台无关 page_specs
-  → mac_python_pptx_v1
+  → mac_python_pptx_v2
   → python-pptx 本地构建
   → PowerPoint for Mac 渲染（优先）或 LibreOffice 回退
   → 审计与三文件交付包
@@ -152,7 +152,7 @@ macOS 不使用 PowerPoint COM。要求：
 - Python 3.12
 - PowerPoint for Mac，或用于回退渲染的 LibreOffice
 - Codex 桌面端或其他可加载本地 Skill 的 Codex 环境
-- 蓝图模式需要可用的 ImageGen
+- V6 解构模式和位图模式都需要可用的 ImageGen
 
 macOS 安装：
 
@@ -192,11 +192,17 @@ $standard-report-ppt 用这份报告做5页PPT，快速模式
 python scripts/project_pipeline.py <project> --init
 python scripts/project_pipeline.py <project> --materialize
 python scripts/project_pipeline.py <project> --prepare-visual-review
+# 位图模式改用：
+python scripts/project_pipeline.py <project> --prepare-bitmap-review
 python scripts/project_pipeline.py <project> --compile
 python scripts/project_pipeline.py <project> --run --output <project>/output/report.pptx
 ```
 
-`--prepare-visual-review` 仅用于 V5.9.6 蓝图模式，并且必须在正式蓝图锁定后执行。
+`--prepare-visual-review` 用于 V6 解构模式（以及 V5.9.6 旧项目蓝图模式），在正式蓝图锁定后生成全页与 Q1–Q4 哈希绑定审查；V6 位图模式必须使用 `--prepare-bitmap-review`，只做逐页全图审查。
+
+Windows 外部端到端冒烟已验证 V6 解构、位图两种模式均可由 PowerPoint COM 成功构建。真实 PowerPoint for Mac 冒烟通过前，版本仍标记为 `V6.0.0-rc1`。
+
+> V5.9 兼容路径仍使用 `mac_python_pptx_v1`，并仅对 V5.9.x 旧项目保留 `fast`；它们不是 V6 默认路径。
 
 ### 验证
 
@@ -264,25 +270,27 @@ Shared content and blueprint
   → PPTX + blueprints.zip + py.zip
 ```
 
-Requirements: Windows 10/11, Microsoft PowerPoint desktop, Python 3.12, a Codex environment that can load local skills, and ImageGen for blueprint mode.
+Requirements: Windows 10/11, Microsoft PowerPoint desktop, Python 3.12, a Codex environment that can load local skills, and ImageGen for both V6 construction modes.
 
 ```powershell
 git clone https://github.com/edchwx-lang/standard-report-ppt.git "$HOME\.codex\skills\standard-report-ppt"
 ```
 
-### macOS path
+### macOS path (V6 default)
 
 ```text
 Shared content and blueprint
   → platform-neutral page_specs
-  → mac_python_pptx_v1
+  → mac_python_pptx_v2
   → local python-pptx build
   → PowerPoint for Mac render or LibreOffice fallback
   → audits
   → PPTX + blueprints.zip + py.zip
 ```
 
-macOS never uses PowerPoint COM. Requirements: macOS, Python 3.12, PowerPoint for Mac or LibreOffice for rendering, a Codex environment that can load local skills, and ImageGen for blueprint mode.
+macOS never uses PowerPoint COM. Requirements: macOS, Python 3.12, PowerPoint for Mac or LibreOffice for rendering, a Codex environment that can load local skills, and ImageGen for both V6 construction modes.
+
+For V5.9.x compatibility only, the legacy route remains `mac_python_pptx_v1` and may still accept `fast`. Neither is a V6 default.
 
 ```bash
 git clone https://github.com/edchwx-lang/standard-report-ppt.git "$HOME/.codex/skills/standard-report-ppt"
@@ -293,7 +301,7 @@ Without either renderer, the pipeline may produce a structurally valid local PPT
 ### Usage
 
 ```text
-$standard-report-ppt Create a 3-slide deck from this report in blueprint mode.
+$standard-report-ppt Create a 3-slide V6 deck, then use deconstruct construction after locking the blueprints.
 $standard-report-ppt Create a 5-slide V6 deck and use bitmap construction after locking the blueprints.
 ```
 

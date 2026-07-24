@@ -383,6 +383,8 @@ def preflight_project(project_dir: str | Path) -> dict:
             skill_dir / "assets" / "direct_blueprint_generator_template.py",
             skill_dir / "assets" / "python_pptx_generator_template_v2.py",
             skill_dir / "assets" / "vendor" / "fonttools-4.63.0-py3.zip",
+            skill_dir / "prompts" / "deconstruction_alignment_prompt.md",
+            skill_dir / "prompts" / "bitmap_alignment_prompt.md",
             *[
                 skill_dir / "scripts" / name
                 for name in (
@@ -399,6 +401,7 @@ def preflight_project(project_dir: str | Path) -> dict:
                     "v6_deconstruction.py",
                     "v6_mac_spec.py",
                     "v6_editability_audit.py",
+                    "v596_visual_review.py",
                     "pack_delivery.py",
                 )
             ],
@@ -891,6 +894,48 @@ def _materialize_v6_formal_blueprint_manifest(
     return payload
 
 
+def _validate_v6_deconstruct_alignment(
+    project: Path,
+    brief: dict[str, Any],
+    alignment: dict[str, Any],
+) -> None:
+    expected = {
+        f"S{index:02d}"
+        for index in range(1, int(brief["requested_page_count"]) + 1)
+    }
+    if (
+        not isinstance(alignment, dict)
+        or alignment.get("schema_version") != "6.0"
+        or alignment.get("pipeline_revision") != "6.0.0"
+        or alignment.get("construction_mode") != "deconstruct"
+        or not isinstance(alignment.get("pages"), dict)
+        or set(alignment["pages"]) != expected
+    ):
+        raise ValueError("V6 deconstruction alignment header or page set is invalid")
+    review_path = project / ".build" / "visual_review_tiles.json"
+    if not review_path.is_file():
+        raise ValueError("V6 deconstruction visual review manifest is missing")
+    review_manifest = _read_json(review_path)
+    if (
+        review_manifest.get("schema_version") != "6.0"
+        or review_manifest.get("skill_version") != "6.0.0-rc1"
+        or review_manifest.get("pipeline_revision") != "6.0.0"
+        or review_manifest.get("construction_mode") != "deconstruct"
+        or not isinstance(review_manifest.get("pages"), dict)
+        or set(review_manifest["pages"]) != expected
+    ):
+        raise ValueError("V6 deconstruction visual review page set is invalid")
+    validator = _load_module(
+        "standard_report_v596_visual_review_v6",
+        Path(__file__).with_name("v596_visual_review.py"),
+    )
+    errors = validator.validate_review_tiles(project, alignment)
+    if errors:
+        raise ValueError(
+            "V6 deconstruction visual review failed: " + "; ".join(errors)
+        )
+
+
 def _materialize_v583_if_present(project_dir: Path) -> None:
     bundle = project_dir / ".build" / "authoring_bundle.json"
     if not _uses_v583_authoring(project_dir) or not bundle.is_file():
@@ -1151,6 +1196,9 @@ def prebuild_project(
         elif mode == "deconstruct":
             alignment_payload = _read_json(
                 project_dir / ".build" / "blueprint_alignment.json"
+            )
+            _validate_v6_deconstruct_alignment(
+                project_dir, brief, alignment_payload
             )
             pages = alignment_payload.get("pages", {})
             if not isinstance(pages, dict):
@@ -1624,6 +1672,12 @@ def _v6_preprocess_batches(
             and previous.get("builder_backend") == backend
             and prior.get("preprocess_status") == "complete"
             and prior.get("fingerprint_sha256") == fingerprint
+            and _v6_batch_receipt_valid(
+                project,
+                int(prior.get("batch_id", index)),
+                slide_ids,
+                fingerprint,
+            )
         )
         if can_reuse:
             reusable.update(slide_ids)
@@ -1649,6 +1703,102 @@ def _v6_preprocess_batches(
     return payload, reusable
 
 
+def _v6_batch_receipt_path(project: Path, batch_id: int) -> Path:
+    return (
+        project
+        / ".build"
+        / "v6_preprocess_batches"
+        / f"batch_{batch_id:02d}.json"
+    )
+
+
+def _v6_batch_receipt_valid(
+    project: Path,
+    batch_id: int,
+    slide_ids: list[str],
+    fingerprint: str,
+) -> bool:
+    path = _v6_batch_receipt_path(project, batch_id)
+    if not path.is_file():
+        return False
+    try:
+        receipt = _read_json(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    if (
+        receipt.get("schema_version") != "6.0"
+        or receipt.get("pipeline_revision") != "6.0.0"
+        or receipt.get("fingerprint_sha256") != fingerprint
+        or receipt.get("slide_ids") != slide_ids
+        or not isinstance(receipt.get("assets"), dict)
+    ):
+        return False
+    for record in receipt["assets"].values():
+        if not isinstance(record, dict):
+            return False
+        relative = record.get("path")
+        if not isinstance(relative, str):
+            return False
+        asset = (project / relative).resolve()
+        try:
+            asset.relative_to(project)
+        except ValueError:
+            return False
+        if not asset.is_file() or record.get("sha256") != _sha256_file(asset):
+            return False
+    return True
+
+
+def _write_v6_batch_receipt(
+    project: Path,
+    brief: dict[str, Any],
+    batch: dict[str, Any],
+    alignment: dict[str, Any],
+) -> None:
+    mode = str(brief["construction_mode"])
+    slide_ids = list(batch["slide_ids"])
+    assets: dict[str, Any] = {}
+    parsed: dict[str, Any] = {}
+    for slide_id in slide_ids:
+        page = alignment["pages"][slide_id]
+        if mode == "deconstruct":
+            parsed[slide_id] = page.get("resolved_page_spec")
+            visuals = [
+                item
+                for item in page.get("visuals", [])
+                if isinstance(item, dict)
+                and item.get("treatment", item.get("disposition")) == "crop"
+            ]
+            asset_ids = [str(item.get("asset_id")) for item in visuals]
+        else:
+            parsed[slide_id] = {"source_px": page.get("source_px")}
+            asset_ids = [f"{slide_id}_BODY_BITMAP"]
+        for asset_id in asset_ids:
+            if not _V6_ASSET_ID.fullmatch(asset_id):
+                raise ValueError(f"{slide_id}: unsafe V6 batch asset_id")
+            relative = f".build/assets/{slide_id}/{asset_id}.png"
+            asset = (project / relative).resolve()
+            if not asset.is_file():
+                raise FileNotFoundError(asset)
+            assets[f"{slide_id}/{asset_id}"] = {
+                "path": relative,
+                "sha256": _sha256_file(asset),
+            }
+    _write_json_atomic(
+        _v6_batch_receipt_path(project, int(batch["batch_id"])),
+        {
+            "schema_version": "6.0",
+            "pipeline_revision": "6.0.0",
+            "construction_mode": mode,
+            "batch_id": int(batch["batch_id"]),
+            "slide_ids": slide_ids,
+            "fingerprint_sha256": batch["fingerprint_sha256"],
+            "parsed_pages": parsed,
+            "assets": assets,
+        },
+    )
+
+
 def _complete_v6_preprocess_batches(
     project: Path, payload: dict[str, Any]
 ) -> None:
@@ -1658,6 +1808,72 @@ def _complete_v6_preprocess_batches(
         for item in payload.get("batches", [])
     ]
     _write_json_atomic(project / ".build" / "v6_batch_plan.json", completed)
+
+
+def _execute_v6_preprocess_batches(
+    project: Path,
+    brief: dict[str, Any],
+    backend: str,
+    payload: dict[str, Any],
+    reusable_slide_ids: set[str],
+) -> set[str]:
+    """Persist each post-lock parsing/cropping batch independently."""
+
+    del backend
+    mode = str(brief["construction_mode"])
+    alignment_name = (
+        "blueprint_alignment.json"
+        if mode == "deconstruct"
+        else "bitmap_alignment.json"
+    )
+    alignment = _read_json(project / ".build" / alignment_name)
+    if mode == "deconstruct":
+        _validate_v6_deconstruct_alignment(project, brief, alignment)
+        bitmap = None
+    else:
+        bitmap = _load_module(
+            "standard_report_v6_bitmap_batch",
+            Path(__file__).with_name("v6_bitmap.py"),
+        )
+    completed = set(reusable_slide_ids)
+    plan_path = project / ".build" / "v6_batch_plan.json"
+    batches = payload.get("batches", [])
+    for index, batch in enumerate(batches):
+        slide_ids = list(batch.get("slide_ids", []))
+        if batch.get("preprocess_status") == "reused":
+            completed.update(slide_ids)
+            continue
+        try:
+            if mode == "deconstruct":
+                subset = {
+                    **alignment,
+                    "pages": {
+                        slide_id: alignment["pages"][slide_id]
+                        for slide_id in slide_ids
+                    },
+                }
+                _materialize_v6_deconstruct_assets(project, subset)
+            else:
+                assert bitmap is not None
+                bitmap.materialize_bitmap_batch_assets(project, slide_ids)
+        except Exception as exc:
+            batches[index] = {
+                **batch,
+                "preprocess_status": "failed",
+                "error": str(exc),
+            }
+            payload["batches"] = batches
+            _write_json_atomic(plan_path, payload)
+            raise
+        _write_v6_batch_receipt(project, brief, batch, alignment)
+        batches[index] = {
+            **batch,
+            "preprocess_status": "complete",
+        }
+        completed.update(slide_ids)
+        payload["batches"] = batches
+        _write_json_atomic(plan_path, payload)
+    return completed
 
 
 def _mark_v6_whole_deck_built(project: Path) -> None:
@@ -1738,6 +1954,16 @@ def _run_v6_project(
         "preprocess_plan",
         lambda: _v6_preprocess_batches(project_dir, brief, backend),
     )
+    preprocessed_slides = guarded(
+        "preprocess_batches",
+        lambda: _execute_v6_preprocess_batches(
+            project_dir,
+            brief,
+            backend,
+            batch_plan,
+            reusable_slides,
+        ),
+    )
     guarded(
         "prebuild_validate",
         lambda: _stage(
@@ -1745,13 +1971,9 @@ def _run_v6_project(
             "prebuild_validate",
             lambda: prebuild_project(
                 project_dir,
-                reuse_preprocessed_slide_ids=reusable_slides,
+                reuse_preprocessed_slide_ids=preprocessed_slides,
             ),
         ),
-    )
-    guarded(
-        "prebuild_validate",
-        lambda: _complete_v6_preprocess_batches(project_dir, batch_plan),
     )
     generator = guarded("compile", lambda: compile_project(project_dir))
     if backend == "windows_com_v584":

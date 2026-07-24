@@ -31,6 +31,15 @@ class V6BoundaryTests(unittest.TestCase):
             "解构模式（较慢）：逐页拆解蓝图并重建为可编辑 PPT；复杂非原生视觉可保留为局部位图。",
             skill,
         )
+
+    def test_v6_preflight_lists_new_review_resources(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        source = (ROOT / "scripts" / "project_pipeline.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('skill_dir / "prompts" / "deconstruction_alignment_prompt.md"', source)
+        self.assertIn('skill_dir / "prompts" / "bitmap_alignment_prompt.md"', source)
+        self.assertIn('"v596_visual_review.py"', source)
         self.assertIn(
             "位图模式（较快）：章节、标题、核心判断、来源和页码可编辑；主体蓝图裁切后作为不可编辑图片放入。",
             skill,

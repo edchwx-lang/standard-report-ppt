@@ -184,6 +184,21 @@ class V6DeliveryTests(unittest.TestCase):
         generator = project / "generate_deck.py"
         pptx.write_bytes(b"pptx")
         generator.write_text("print('ok')\n", encoding="utf-8")
+        (project / ".build" / "compile_report.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "6.0",
+                    "pipeline_revision": "6.0.0",
+                    "construction_mode": mode,
+                    "builder_backend": "windows_com_v584",
+                    "generator": "generate_deck.py",
+                    "generator_sha256": hashlib.sha256(
+                        generator.read_bytes()
+                    ).hexdigest(),
+                }
+            ),
+            encoding="utf-8",
+        )
         (project / ".build" / audit_name).write_text(
             json.dumps({
                 "ok": True,
@@ -268,6 +283,31 @@ class V6DeliveryTests(unittest.TestCase):
             ).hexdigest()
             contract_path.write_text(json.dumps(contract), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "derivation"):
+                PACK.package_v6_delivery(
+                    project, pptx, generator, project / "delivery.zip"
+                )
+
+    def test_delivery_rejects_generator_tampered_after_compile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            pptx, generator = self.make_project(project, "deconstruct")
+            (project / ".build" / "compile_report.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "6.0",
+                        "pipeline_revision": "6.0.0",
+                        "construction_mode": "deconstruct",
+                        "builder_backend": "windows_com_v584",
+                        "generator": "generate_deck.py",
+                        "generator_sha256": hashlib.sha256(
+                            generator.read_bytes()
+                        ).hexdigest(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            generator.write_text("print('tampered')\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "generator"):
                 PACK.package_v6_delivery(
                     project, pptx, generator, project / "delivery.zip"
                 )
