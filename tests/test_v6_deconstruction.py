@@ -21,11 +21,12 @@ def brief() -> dict:
     return {"schema_version": "6.0", "pipeline_revision": "6.0.0", "construction_mode": "deconstruct"}
 
 
-def alignment(bindings, *, decisions=None, visuals=None) -> dict:
+def alignment(bindings, *, decisions=None, visuals=None, modules=None) -> dict:
     return {"pages": {"S01": {
         "reconstruction_contract": {"module_bindings": bindings},
         "text_decisions": decisions or [],
         "visuals": visuals or [],
+        "structure_modules": modules or [],
     }}}
 
 
@@ -49,17 +50,25 @@ class V6DeconstructionTests(unittest.TestCase):
                 self.assertIn("DECONSTRUCTION_BODY_BITMAP_FORBIDDEN", [item["code"] for item in report["blockers"]])
 
     def test_pure_map_allows_only_skeleton_text_decisions(self):
-        specs = {"S01": {"elements": [{"element_id": "MAP", "asset_id": "MAP_ASSET", "type": "asset"}]}}
+        specs = {"S01": {"elements": [{"element_id": "MAP", "asset_id": "MAP_ASSET", "type": "asset"}, {"element_id": "TEXT", "type": "text"}]}}
         skeleton = [{"role": role, "selected": role} for role in SKELETON_ROLES]
         reviewed = alignment(
-            [{"module_id": "map", "element_ids": ["MAP"]}], decisions=skeleton,
+            [{"module_id": "map", "element_ids": ["MAP"]}, {"module_id": "text", "element_ids": ["TEXT"]}], decisions=skeleton + [{"module_id": "text", "role": "body", "selected": "Body copy"}],
             visuals=[{"asset_id": "MAP_ASSET", "kind": "map"}],
+            modules=[{"module_id": "map", "module_kind": "pure_visual", "contains_editable_text": False}, {"module_id": "text", "module_kind": "text", "contains_editable_text": True}],
         )
         report = self.subject.validate_deconstruction_prebuild(brief(), specs, reviewed, "mac_python_pptx_v2")
         self.assertTrue(report["ok"])
         self.assertEqual(["MAP_ASSET"], report["allowed_large_visual_asset_ids"])
-        reviewed["pages"]["S01"]["text_decisions"].append({"role": "body", "selected": "Body copy"})
+        reviewed["pages"]["S01"]["text_decisions"].append({"module_id": "map", "role": "body", "selected": "Map label"})
         self.assertFalse(self.subject.validate_deconstruction_prebuild(brief(), specs, reviewed, "mac_python_pptx_v2")["ok"])
+
+    def test_asset_only_chart_and_missing_module_semantics_are_blocked(self):
+        specs = {"S01": {"elements": [{"element_id": "CHART_IMAGE", "asset_id": "A", "type": "asset"}]}}
+        chart = alignment([{"module_id": "chart", "element_ids": ["CHART_IMAGE"]}], visuals=[{"asset_id": "A", "kind": "map"}], modules=[{"module_id": "chart", "module_kind": "chart", "contains_editable_text": False}])
+        self.assertFalse(self.subject.validate_deconstruction_prebuild(brief(), specs, chart, "windows_com_v584")["ok"])
+        missing = alignment([{"module_id": "chart", "element_ids": ["CHART_IMAGE"]}], visuals=[{"asset_id": "A", "kind": "map"}])
+        self.assertFalse(self.subject.validate_deconstruction_prebuild(brief(), specs, missing, "windows_com_v584")["ok"])
 
     def test_body_asset_and_unsupported_mac_type_are_blocked(self):
         specs = {"S01": {"elements": [{"element_id": "BODY", "type": "body_asset"}, {"element_id": "X", "type": "magic"}]}}
