@@ -79,6 +79,21 @@ class V6DeconstructionTests(unittest.TestCase):
         self.assertIn("DECONSTRUCTION_BODY_BITMAP_FORBIDDEN", [item["code"] for item in report["blockers"]])
         self.assertIn("MAC_RECONSTRUCTION_UNSUPPORTED", [item["code"] for item in report["blockers"]])
 
+    def test_unbound_asset_and_missing_binding_element_are_blocked(self):
+        specs = {"S01": {"elements": [{"element_id": "COMPOSITE", "asset_id": "A", "type": "asset"}, {"element_id": "DUMMY", "type": "rect"}]}}
+        unbound = alignment([{"module_id": "dummy", "element_ids": ["DUMMY"]}], modules=[{"module_id": "dummy", "module_kind": "geometry", "contains_editable_text": False}])
+        report = self.subject.validate_deconstruction_prebuild(brief(), specs, unbound, "windows_com_v584")
+        self.assertFalse(report["ok"])
+        self.assertTrue(any("asset element COMPOSITE must have exactly one valid module binding" in item["message"] for item in report["blockers"]))
+        missing = alignment([{"module_id": "map", "element_ids": ["MISSING"]}])
+        report = self.subject.validate_deconstruction_prebuild(brief(), specs, missing, "windows_com_v584")
+        self.assertTrue(any("references missing element MISSING" in item["message"] for item in report["blockers"]))
+
+    def test_page_specs_and_alignment_page_sets_must_match(self):
+        report = self.subject.validate_deconstruction_prebuild(brief(), {"S01": {"elements": []}}, {"pages": {"S02": {}}}, "windows_com_v584")
+        self.assertFalse(report["ok"])
+        self.assertTrue(any("page spec ids must exactly equal alignment page ids" in item["message"] for item in report["blockers"]))
+
 
 if __name__ == "__main__":
     unittest.main()

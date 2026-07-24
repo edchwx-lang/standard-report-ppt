@@ -14,10 +14,10 @@ DECONSTRUCTION_EDITABILITY_FAILED = "DECONSTRUCTION_EDITABILITY_FAILED"
 BITMAP_CONTRACT_INVALID = "BITMAP_CONTRACT_INVALID"
 _EMU_PER_INCH = 914400.0
 _TOLERANCE = 0.02
-_PICTURE, _LINE, _TEXTBOX = 13, 9, 17
+_AUTO_SHAPE, _PICTURE, _LINE, _TEXTBOX = 1, 13, 9, 17
 _CHART_TYPES = {"hbar_chart", "column_chart", "line_chart", "combo_chart", "donut_chart", "grouped_hbar_chart"}
 _SKELETON = {"SKEL_CHAPTER", "SKEL_TITLE", "SKEL_CORE", "SKEL_SOURCE", "SKEL_PAGE_NUMBER"}
-_BASIC_TYPES = {"rect", "oval", "line", "arrow", "flow"}
+_TEXT_TYPES = {"text", "section_header", "text_card", "metric_strip"}
 
 
 def _pages(value: Any) -> dict[str, Any]:
@@ -82,7 +82,14 @@ def _skeleton_errors(slide, code: str, slide_id: str) -> list[dict[str, Any]]:
     return errors
 
 
-def audit_deconstruction_pptx(pptx_path: str | Path, page_specs: dict[str, Any], alignment: dict[str, Any], allowed_large_visual_assets_by_page: dict[str, list[str]] | None = None) -> dict[str, Any]:
+def audit_deconstruction_pptx(
+    pptx_path: str | Path,
+    page_specs: dict[str, Any],
+    alignment: dict[str, Any],
+    allowed_large_visual_assets_by_page: dict[str, list[str]] | None = None,
+    *,
+    builder_backend: str | None = None,
+) -> dict[str, Any]:
     from pptx import Presentation
 
     presentation = Presentation(str(pptx_path)); specs = _pages(page_specs); aligned = _pages(alignment)
@@ -99,12 +106,29 @@ def audit_deconstruction_pptx(pptx_path: str | Path, page_specs: dict[str, Any],
             if not matches:
                 blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"missing element prefix {_prefix(element_id)}")); continue
             kind = element.get("type")
-            if kind == "matrix" and not any(shape.has_table for shape in matches): blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"{element_id} requires native table"))
-            if kind in _CHART_TYPES and not any(shape.has_chart for shape in matches): blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"{element_id} requires native chart"))
+            windows_primitives = (
+                builder_backend == "windows_com_v584"
+                and len(matches) >= 2
+                and all(shape.shape_type != _PICTURE for shape in matches)
+            )
+            if kind == "matrix" and not (
+                any(shape.has_table for shape in matches) or windows_primitives
+            ):
+                blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"{element_id} requires native editable table semantics"))
+            if kind in _CHART_TYPES and not (
+                any(shape.has_chart for shape in matches) or windows_primitives
+            ):
+                blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"{element_id} requires native editable chart semantics"))
+            if kind in {"rect", "oval", "arrow"} and not any(shape.shape_type == _AUTO_SHAPE for shape in matches):
+                blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"{element_id} requires native AutoShape"))
+            if kind == "line" and not any(shape.shape_type == _LINE for shape in matches):
+                blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"{element_id} requires native connector"))
+            if kind in _TEXT_TYPES and not any(shape.shape_type != _PICTURE and shape.has_text_frame for shape in matches):
+                blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"{element_id} requires native text frame"))
             if kind == "flow":
-                node = any(shape.shape_type not in {_PICTURE, _LINE, _TEXTBOX} for shape in matches)
+                node = any(shape.shape_type == _AUTO_SHAPE for shape in matches)
                 connector = any(shape.shape_type == _LINE for shape in matches)
-                if not node or not connector: blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"{element_id} requires native node and connector"))
+                if not node or not connector: blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"{element_id} requires native AutoShape node and connector"))
         for selected in _selected(page):
             if selected not in xml.get(slide_id, ""): blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"selected text absent from OOXML: {selected!r}"))
         body = _body(slide); body_area = body[2] * body[3]
@@ -112,9 +136,23 @@ def audit_deconstruction_pptx(pptx_path: str | Path, page_specs: dict[str, Any],
         for element in elements:
             element_id = element.get("element_id")
             if not isinstance(element_id, str): continue
-            for shape in _matching(slide, element_id):
+            matches = _matching(slide, element_id)
+            kind = element.get("type")
+            windows_primitives = builder_backend == "windows_com_v584" and len(matches) >= 2 and all(shape.shape_type != _PICTURE for shape in matches)
+            for shape in matches:
                 if _overlap(_box(shape), body) <= 0: continue
-                if shape.has_text_frame and shape.text.strip() or shape.has_table or shape.has_chart or element.get("type") in _BASIC_TYPES: native = True
+                if kind in _TEXT_TYPES and shape.shape_type != _PICTURE and shape.has_text_frame:
+                    native = True
+                elif kind in {"rect", "oval", "arrow"} and shape.shape_type == _AUTO_SHAPE:
+                    native = True
+                elif kind == "line" and shape.shape_type == _LINE:
+                    native = True
+                elif kind == "flow" and shape.shape_type in {_AUTO_SHAPE, _LINE}:
+                    native = True
+                elif kind == "matrix" and (shape.has_table or windows_primitives):
+                    native = True
+                elif kind in _CHART_TYPES and (shape.has_chart or windows_primitives):
+                    native = True
         for shape in slide.shapes:
             if shape.shape_type != _PICTURE or body_area <= 0 or _overlap(_box(shape), body) / body_area < .60: continue
             asset_id = next((element.get("asset_id") for element in elements if isinstance(element.get("element_id"), str) and shape.name.startswith(_prefix(element["element_id"]))), None)

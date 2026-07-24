@@ -40,6 +40,8 @@ def validate_deconstruction_prebuild(brief: dict[str, Any], page_specs: dict[str
     allowed_by_page: dict[str, list[str]] = {}
     specs = _pages(page_specs)
     aligned = _pages(alignment)
+    if set(specs) != set(aligned):
+        blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, "", "page spec ids must exactly equal alignment page ids"))
     for slide_id, raw_spec in specs.items():
         spec = raw_spec if isinstance(raw_spec, dict) else {}
         page = aligned.get(slide_id, {}) if isinstance(aligned.get(slide_id, {}), dict) else {}
@@ -62,17 +64,32 @@ def validate_deconstruction_prebuild(brief: dict[str, Any], page_specs: dict[str
 
         bound_modules: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
         asset_references: dict[str, int] = {}
+        element_references: dict[str, int] = {}
         for binding in bindings:
             ids = binding.get("element_ids", []) if isinstance(binding.get("element_ids"), list) else []
+            missing_ids = [item for item in ids if not isinstance(item, str) or item not in by_id]
+            valid_binding = isinstance(binding.get("module_id"), str) and bool(binding.get("module_id")) and bool(ids) and not missing_ids
+            if missing_ids:
+                for missing_id in missing_ids:
+                    blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, str(slide_id), f"module binding references missing element {missing_id}"))
+            if not valid_binding:
+                bound_modules.append((binding, []))
+                continue
             bound = [by_id[item] for item in ids if isinstance(item, str) and item in by_id]
             bound_modules.append((binding, bound))
             for element in bound:
+                element_id = element.get("element_id")
+                if isinstance(element_id, str):
+                    element_references[element_id] = element_references.get(element_id, 0) + 1
                 if element.get("type") in _ASSET_TYPES:
                     asset_id = element.get("asset_id", element.get("element_id"))
                     if isinstance(asset_id, str):
                         asset_references[asset_id] = asset_references.get(asset_id, 0) + 1
         if any(count > 1 for count in asset_references.values()):
             blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, str(slide_id), "one asset element is referenced by multiple module bindings"))
+        for element in elements:
+            if element.get("type") in _ASSET_TYPES and element_references.get(element.get("element_id"), 0) != 1:
+                blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, str(slide_id), f"asset element {element.get('element_id', '?')} must have exactly one valid module binding"))
 
         visuals = [item for item in page.get("visuals", []) if isinstance(item, dict)]
         page_allowed: set[str] = set()

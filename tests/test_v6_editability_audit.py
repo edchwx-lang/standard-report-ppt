@@ -91,6 +91,45 @@ class V6EditabilityAuditTests(unittest.TestCase):
             ppt.save(deck)
             self.assertFalse(self.subject.audit_deconstruction_pptx(deck, {"S01": {"elements": [{"element_id": "FLOW", "type": "flow"}]}}, reviewed())["ok"])
 
+    def test_picture_cannot_masquerade_as_native_rect_line_or_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            asset = Path(directory) / "body.png"; Image.new("RGB", (400, 200), "navy").save(asset)
+            expectations = {"rect": "native AutoShape", "line": "native connector", "text": "native text frame"}
+            for kind, message in expectations.items():
+                with self.subTest(kind=kind):
+                    ppt, slide, deck = self.deck(directory); add_picture(slide, asset, f"EL_FAKE_1"); ppt.save(deck)
+                    report = self.subject.audit_deconstruction_pptx(deck, {"S01": {"elements": [{"element_id": "FAKE", "type": kind}]}}, reviewed())
+                    self.assertFalse(report["ok"])
+                    self.assertTrue(any(message in item["message"] for item in report["blockers"]))
+                    self.assertTrue(any("large body picture" in item["message"] for item in report["blockers"]))
+
+    def test_chart_or_table_cannot_masquerade_as_flow_node(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for impostor in ("chart", "table"):
+                with self.subTest(impostor=impostor):
+                    ppt, slide, deck = self.deck(directory)
+                    if impostor == "chart":
+                        data = CategoryChartData(); data.categories = ["A"]; data.add_series("S", (1,))
+                        shape = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(1), Inches(2), Inches(2), Inches(1), data)
+                    else:
+                        shape = slide.shapes.add_table(2, 2, Inches(1), Inches(2), Inches(2), Inches(1))
+                    shape.name = "EL_FLOW_1"
+                    connector = slide.shapes.add_connector(1, Inches(3), Inches(2.5), Inches(4), Inches(2.5)); connector.name = "EL_FLOW_2"
+                    ppt.save(deck)
+                    report = self.subject.audit_deconstruction_pptx(deck, {"S01": {"elements": [{"element_id": "FLOW", "type": "flow"}]}}, reviewed())
+                    self.assertFalse(report["ok"])
+                    self.assertTrue(any("requires native AutoShape node and connector" in item["message"] for item in report["blockers"]))
+
+    def test_windows_backend_explicitly_accepts_editable_chart_primitives(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ppt, slide, deck = self.deck(directory)
+            for index, left in enumerate((1, 2), start=1):
+                shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(left), Inches(2), Inches(.5), Inches(1)); shape.name = f"EL_CHART_{index}"
+            ppt.save(deck)
+            specs = {"S01": {"elements": [{"element_id": "CHART", "type": "column_chart"}]}}
+            self.assertFalse(self.subject.audit_deconstruction_pptx(deck, specs, reviewed())["ok"])
+            self.assertTrue(self.subject.audit_deconstruction_pptx(deck, specs, reviewed(), builder_backend="windows_com_v584")["ok"])
+
     def test_large_body_picture_fails_for_editability_not_missing_text(self):
         with tempfile.TemporaryDirectory() as directory:
             asset = Path(directory) / "map.png"; Image.new("RGB", (400, 200), "navy").save(asset)
