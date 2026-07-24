@@ -256,23 +256,26 @@ If the request has no exact count:
 
 “适量”, “简要”, “几页左右”, “若干页”, and “as needed” are not exact counts.
 
-### Gate 1 — production mode
+### Gate 1 — construction mode
 
-Recognize an explicit user choice:
+V6 new projects always use `production_mode: "blueprint"` and require an explicit
+`construction_mode`. Recognize only these choices:
 
-- `blueprint`: ImageGen, 蓝图还原, 高保真蓝图, or choice `1` after the menu.
-- `fast`: 快速生成, 跳过蓝图, 无 ImageGen, or choice `2` after the menu.
+- `解构 / 可编辑 / 1` → `deconstruct`
+- `位图 / 快速位图 / 2` → `bitmap`
 
 If the mode is absent, show exactly these choices and wait for the user's explicit choice:
 
-1. `ImageGen 蓝图还原（默认推荐）`
-2. `快速生成`
+1. `解构模式（较慢）：逐页拆解蓝图并重建为可编辑 PPT；复杂非原生视觉可保留为局部位图。`
+2. `位图模式（较快）：章节、标题、核心判断、来源和页码可编辑；主体蓝图裁切后作为不可编辑图片放入。`
 
-“默认推荐” is a recommendation, not permission to begin. If ImageGen is unavailable, ask whether to switch to fast mode or stop. Never downgrade silently.
+“蓝图模式”单独出现不是有效选择，因为两个模式都必须生成蓝图。V6 不设默认
+`construction_mode`。ImageGen 不可调用或无权限时立即以
+`IMAGEGEN_UNAVAILABLE` 停止；不得询问或切换到跳过蓝图的生产方式。
 
 ## Two-gate execution contract
 
-After the user has explicitly confirmed the final page count and production mode, begin production immediately. These are the only routine user confirmations in this skill.
+After the user has explicitly confirmed the final page count and construction mode, begin production immediately. These are the only routine user confirmations in this skill.
 
 - Do not ask for design, layout, specification, plan, or implementation approval after both gates pass.
 - Do not invoke generic brainstorming, design-spec approval, writing-plan, branch-finishing, or worktree workflows for normal deck production. This skill owns the complete production workflow.

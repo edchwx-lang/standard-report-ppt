@@ -32,6 +32,19 @@ class V6BoundaryTests(unittest.TestCase):
             skill,
         )
 
+    def test_v6_intake_has_only_the_construction_mode_gate(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertEqual(1, skill.count("### Gate 1 — construction mode"))
+        self.assertNotIn("### Gate 1 — production mode", skill)
+        self.assertNotIn("1. `ImageGen 蓝图还原（默认推荐）`", skill)
+        self.assertNotIn("2. `快速生成`", skill)
+        self.assertNotIn(
+            "If ImageGen is unavailable, ask whether to switch to fast mode or stop.",
+            skill,
+        )
+        self.assertIn("`解构 / 可编辑 / 1`", skill)
+        self.assertIn("`位图 / 快速位图 / 2`", skill)
+
     def test_v6_preflight_lists_new_review_resources(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         source = (ROOT / "scripts" / "project_pipeline.py").read_text(
