@@ -1,4 +1,17 @@
-# V5.9.2 compiled project contract
+# V6.0 compiled project contract
+
+New V6 projects declare schema `6.0`, pipeline revision `6.0.0`, production mode
+`blueprint`, and an explicit `construction_mode` of `deconstruct` or `bitmap`.
+V6 `fast` is invalid. Deconstruction consumes `.build/page_specs.json`; bitmap
+consumes `.build/bitmap_page_specs.json`, whose sole page element is
+`type: body_asset`, `fit: contain`, `target: runtime_body_box`.
+
+All V6 runtime elements have stable `element_id`; generated shapes are named
+`EL_<element_id>_<n>`. Mac normalizes them into `.build/mac_page_specs.json`
+without reinterpreting content. Runtime and delivery metadata record both
+`construction_mode` and `builder_backend`.
+
+## V5.9.2 compatibility
 
 New projects declare:
 

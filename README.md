@@ -1,10 +1,10 @@
-# Standard Report PPT V5.9.6
+# Standard Report PPT V6.0.0-rc1
 
 [中文说明](#中文说明) · [English](#english)
 
 Standard Report PPT 是一个面向 Codex 的固定模板咨询报告 PPT Skill，可将 DOCX、PDF、研究材料、数据、笔记或已有演示文稿转换为可编辑 PowerPoint。
 
-V5.9.6 在同一套平台无关内容规范之上支持 Windows 和 macOS，并强化了正式蓝图锁定后的视觉清点、图形裁剪和 PPT 资产审计。
+V6 保持蓝图锁定前的内容生产链不变，取消 V6 新项目的快速模式，新增两种必须显式选择的蓝图后构建方式：较慢但可编辑的解构模式，以及较快、主体不可编辑的位图模式。V5.9.x 项目继续按原合同运行。
 
 ## Blueprint showcase / 蓝图效果展示
 
@@ -26,11 +26,31 @@ V5.9.6 在同一套平台无关内容规范之上支持 Windows 和 macOS，并�
 
 ## 中文说明
 
-### V5.9.6 核心能力
+### V6 生产方式门禁
+
+1. `解构模式（较慢）：逐页拆解蓝图并重建为可编辑 PPT；复杂非原生视觉可保留为局部位图。`
+2. `位图模式（较快）：章节、标题、核心判断、来源和页码可编辑；主体蓝图裁切后作为不可编辑图片放入。`
+
+两种方式都必须调用 ImageGen、逐页锁定正式蓝图；ImageGen 不可用时停止，不允许位图模式绕过蓝图，也不允许解构模式自动降级。Windows 使用 `windows_com_v584`，macOS 使用 `mac_python_pptx_v2`。
+
+```mermaid
+flowchart LR
+    A[页数门禁] --> B[生产方式门禁]
+    B --> C[共享：内容解析 → ImageGen → 蓝图锁定]
+    C --> D{construction_mode}
+    D -->|deconstruct| E[完整解析与可编辑重建]
+    D -->|bitmap| F[主体裁切与单图放置]
+    E --> G{OS}
+    F --> G
+    G -->|Windows| H[PowerPoint COM]
+    G -->|macOS| I[python-pptx v2]
+```
+
+### V5.9.6 兼容说明（仅旧项目）
 
 - **两个入口门禁**：只需明确最终页数和生产模式，之后直接执行完整制作流程。
 - **蓝图模式**：每页调用一次 ImageGen，生成结果按字节锁定为正式蓝图；已有蓝图不会因文字、美观或相似度问题自动重做。
-- **快速模式**：跳过 ImageGen，直接生成确定性、平台无关的 `page_specs`。
+- **旧项目快速模式**：仅 V5.9.x 项目保留；V6 新项目不显示也不接受该选项。
 - **视觉优先路由**：根据证据选择图表、结构图、视觉节点链、图文比较、查询表、真实流程或叙事模块，不用固定卡片网格套版。
 - **V5.9.6 四象限审查**：正式蓝图锁定后自动生成全页和 Q1–Q4 审查切片，并用 SHA-256 绑定蓝图，避免遗漏底部、边角和小尺寸图形。
 - **强制图形裁剪合同**：`icon`、`pictogram`、`logo`、`map`、`photo`、`illustration`、`device`、`person`、`product`、`flag` 必须形成真实裁剪资产，不能用 `native` 或 `omit` 绕过。
@@ -40,7 +60,7 @@ V5.9.6 在同一套平台无关内容规范之上支持 Windows 和 macOS，并�
 - **可编辑交付**：正文、数字、图表、表格和基础几何保持 PowerPoint 原生可编辑；只有审查确认的非原生视觉作为独立图片资产插入。
 - **确定性编译**：整份演示文稿由一个根目录 `generate_deck.py` 构建，不生成逐页脚本。
 
-### 最新工作流
+### V5.9.6 旧项目工作流（兼容参考）
 
 ```mermaid
 flowchart TD
@@ -206,11 +226,24 @@ standard-report-ppt/
 
 ## English
 
-### What V5.9.6 provides
+### V6 construction gate
+
+Every new V6 project must explicitly select one of these post-blueprint routes:
+
+1. Deconstruct (slower): parse each blueprint and rebuild an editable PPT; one
+   bounded local bitmap may remain for a genuinely non-native visual subject.
+2. Bitmap (faster): keep chapter, title, core judgment, source, and page number
+   editable, then place one reviewed cropped body image.
+
+Both routes require built-in ImageGen and one immutable blueprint per page.
+Windows uses `windows_com_v584`; macOS uses `mac_python_pptx_v2`. No route may
+silently switch to the other.
+
+### V5.9.6 compatibility for existing projects
 
 - Two intake gates: the exact final slide count and production mode.
 - Blueprint mode: one successful ImageGen artifact per slide, locked byte-for-byte as the formal blueprint.
-- Fast mode: deterministic, platform-neutral page specifications without ImageGen.
+- Legacy fast mode remains available only to existing V5.9.x projects.
 - Evidence-driven visual routing instead of a fixed card or matrix template.
 - Full-page plus Q1–Q4 hash-bound visual review after the blueprint is locked.
 - Mandatory crop contracts for icons, pictograms, logos, maps, photos, illustrations, devices, people, products, and flags.
@@ -261,7 +294,7 @@ Without either renderer, the pipeline may produce a structurally valid local PPT
 
 ```text
 $standard-report-ppt Create a 3-slide deck from this report in blueprint mode.
-$standard-report-ppt Create a 5-slide deck from this report in fast mode.
+$standard-report-ppt Create a 5-slide V6 deck and use bitmap construction after locking the blueprints.
 ```
 
 See [SKILL.md](SKILL.md) for the complete production contract, compatibility behavior, and delivery rules.

@@ -1,0 +1,421 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
+from PIL import Image
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def load(name: str, relative: str):
+    spec = importlib.util.spec_from_file_location(name, ROOT / relative)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+PIPELINE = load("v6_pipeline_tests", "scripts/project_pipeline.py")
+GATE = load("v6_gate_tests", "scripts/v6_blueprint_gate.py")
+
+
+def brief(mode: str | None = "deconstruct") -> dict:
+    value = {
+        "schema_version": "6.0",
+        "pipeline_revision": "6.0.0",
+        "requested_page_count": 1,
+        "production_mode": "blueprint",
+        "blueprint_engine": "builtin_imagegen",
+        "platform_target": "auto",
+        "source_files": ["C:/source.docx"],
+    }
+    if mode is not None:
+        value["construction_mode"] = mode
+    return value
+
+
+class V6PipelineTests(unittest.TestCase):
+    def make_locked_project(
+        self, project: Path, mode: str = "deconstruct", page_count: int = 1
+    ) -> dict:
+        value = brief(mode)
+        value["requested_page_count"] = page_count
+        (project / ".build").mkdir()
+        (project / "blueprints").mkdir()
+        alignment_pages = {}
+        for index in range(1, page_count + 1):
+            slide_id = f"S{index:02d}"
+            Image.new("RGB", (100, 100), (index, 2, 3)).save(
+                project / "blueprints" / f"{slide_id}.png"
+            )
+            alignment_pages[slide_id] = {
+                "source_px": [0, 10, 100, 90]
+            }
+        alignment_name = (
+            "blueprint_alignment.json"
+            if mode == "deconstruct"
+            else "bitmap_alignment.json"
+        )
+        (project / ".build" / alignment_name).write_text(
+            json.dumps(
+                {
+                    "schema_version": "6.0",
+                    "pipeline_revision": "6.0.0",
+                    "construction_mode": mode,
+                    "pages": alignment_pages,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (project / "project_brief.json").write_text(
+            json.dumps(value), encoding="utf-8"
+        )
+        return value
+
+    def run_with_fakes(
+        self,
+        project: Path,
+        value: dict,
+        *,
+        backend: str = "windows_com_v584",
+        compile_error: Exception | None = None,
+        mac_status: str = "pass",
+        repair: bool = False,
+    ):
+        generator = project / "generate_deck.py"
+        generator.write_text("print('ok')\n", encoding="utf-8")
+        (project / ".build" / "deconstruction_precheck.json").write_text(
+            json.dumps(
+                {"ok": True, "allowed_large_visual_assets_by_page": {}}
+            ),
+            encoding="utf-8",
+        )
+        (project / ".build" / "page_specs.json").write_text(
+            json.dumps({"S01": {"elements": []}}), encoding="utf-8"
+        )
+        loaded: list[str] = []
+        real_loader = PIPELINE._load_module
+
+        def loader(name, path):
+            loaded.append(name)
+            if "windows_runtime" in name:
+                return SimpleNamespace(ensure_windows_runtime=lambda **kwargs: {})
+            if "postbuild_editability" in name:
+                return SimpleNamespace(
+                    audit_deconstruction_pptx=lambda *args, **kwargs: {
+                        "ok": True,
+                        "status": "pass",
+                        "blockers": [],
+                    },
+                    audit_bitmap_pptx=lambda *args, **kwargs: {
+                        "ok": True,
+                        "status": "pass",
+                        "blockers": [],
+                    },
+                )
+            if "macos_render" in name:
+                return SimpleNamespace(
+                    render_project=lambda *args, **kwargs: {
+                        "ok": True,
+                        "status": "pass",
+                        "visual_verification": True,
+                    }
+                )
+            if "macos_quality" in name:
+                return SimpleNamespace(
+                    audit_mac_pptx=lambda *args, **kwargs: {
+                        "ok": mac_status != "blocked",
+                        "status": mac_status,
+                        "errors": ["blocked"] if mac_status == "blocked" else [],
+                    }
+                )
+            return real_loader(name, path)
+
+        def run(command, **kwargs):
+            if "--output" in command:
+                Path(command[command.index("--output") + 1]).write_bytes(b"pptx")
+            return SimpleNamespace(returncode=0)
+
+        compile_side_effect = compile_error or generator
+        with (
+            mock.patch.object(
+                PIPELINE,
+                "_ensure_project_runtime",
+                return_value={
+                    "builder_backend": backend,
+                    "construction_mode": value["construction_mode"],
+                },
+            ),
+            mock.patch.object(PIPELINE, "prebuild_project", return_value={"ok": True}),
+            mock.patch.object(
+                PIPELINE, "compile_project", side_effect=(
+                    compile_side_effect
+                    if isinstance(compile_side_effect, Exception)
+                    else None
+                ), return_value=(
+                    None
+                    if isinstance(compile_side_effect, Exception)
+                    else compile_side_effect
+                )
+            ),
+            mock.patch.object(PIPELINE, "_run", side_effect=run),
+            mock.patch.object(PIPELINE, "_load_module", side_effect=loader),
+        ):
+            result = PIPELINE._run_v6_project(
+                project,
+                value,
+                None,
+                catastrophic_repair=repair,
+                user_revision=False,
+                auto_package=False,
+            )
+        self.assertFalse(any("imagegen" in name.lower() for name in loaded))
+        return result
+
+    def test_v6_requires_explicit_mode_and_rejects_fast(self):
+        self.assertIn("V6_CONSTRUCTION_MODE_REQUIRED", PIPELINE.validate_brief(brief(None)))
+        value = brief("bitmap")
+        value["production_mode"] = "fast"
+        self.assertIn("V6_PRODUCTION_MODE_INVALID", PIPELINE.validate_brief(value))
+
+    def test_user_mode_aliases_are_explicitly_normalized(self):
+        contracts = load("v6_alias_contracts", "scripts/v6_contracts.py")
+        for value in ("解构", "可编辑", "1"):
+            self.assertEqual("deconstruct", contracts.normalize_construction_mode(value))
+        for value in ("位图", "快速位图", "2"):
+            self.assertEqual("bitmap", contracts.normalize_construction_mode(value))
+        self.assertIsNone(contracts.normalize_construction_mode("蓝图模式"))
+
+    def test_v59_fast_remains_valid(self):
+        value = {
+            "schema_version": "5.9",
+            "pipeline_revision": "5.9.6",
+            "requested_page_count": 1,
+            "production_mode": "fast",
+            "platform_target": "auto",
+            "source_files": ["C:/source.docx"],
+        }
+        self.assertEqual([], PIPELINE.validate_brief(value))
+
+    def test_v6_backend_mapping_is_version_aware(self):
+        self.assertEqual("windows_com_v584", PIPELINE.select_v6_backend("Windows"))
+        self.assertEqual("mac_python_pptx_v2", PIPELINE.select_v6_backend("Darwin"))
+        with self.assertRaises(RuntimeError):
+            PIPELINE.select_v6_backend("Linux")
+
+    def test_review_actions_are_mode_specific(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            (project / "project_brief.json").write_text(
+                json.dumps(brief("bitmap")), encoding="utf-8"
+            )
+            (project / "blueprints").mkdir()
+            Image.new("RGB", (1600, 900), "white").save(project / "blueprints" / "S01.png")
+            bitmap = PIPELINE.prepare_bitmap_review(project)
+            self.assertEqual("full_page_only", bitmap["review_scope"])
+            with self.assertRaises(ValueError):
+                PIPELINE.prepare_visual_review(project)
+
+    def test_imagegen_failures_do_not_switch_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            (project / "project_brief.json").write_text(
+                json.dumps(brief("deconstruct")), encoding="utf-8"
+            )
+            unavailable = GATE.record_failure(
+                project, "S01", "tool_unavailable", transport_attempt_count=1
+            )
+            self.assertEqual("IMAGEGEN_UNAVAILABLE", unavailable["error_code"])
+            self.assertFalse(unavailable["resumable"])
+            self.assertEqual("deconstruct", unavailable["construction_mode"])
+
+    def test_transport_failure_allows_only_one_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            (project / "project_brief.json").write_text(
+                json.dumps(brief("bitmap")), encoding="utf-8"
+            )
+            first = GATE.record_failure(
+                project, "S01", "empty_response", transport_attempt_count=1
+            )
+            second = GATE.record_failure(
+                project, "S01", "empty_response", transport_attempt_count=2
+            )
+            self.assertTrue(first["resumable"])
+            self.assertIsNone(first["error_code"])
+            self.assertFalse(second["resumable"])
+            self.assertEqual("BLUEPRINT_TRANSPORT_FAILED", second["error_code"])
+
+    def test_compile_dispatches_without_silent_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            (project / "project_brief.json").write_text(
+                json.dumps(brief("deconstruct")), encoding="utf-8"
+            )
+            (project / ".build").mkdir()
+            (project / ".build" / "runtime_report.json").write_text(
+                json.dumps({"builder_backend": "mac_python_pptx_v2"}), encoding="utf-8"
+            )
+            with mock.patch.object(PIPELINE, "_load_module") as loader:
+                gate = SimpleNamespace(assert_blueprint_gate=lambda *args, **kwargs: {})
+                compiler = SimpleNamespace(
+                    compile_project=lambda *args, **kwargs: project / "generate_deck.py"
+                )
+                loader.side_effect = [gate, compiler]
+                PIPELINE.compile_project(project)
+                self.assertTrue(
+                    str(loader.call_args_list[-1].args[1]).endswith(
+                        "project_compiler_mac_v2.py"
+                    )
+                )
+
+    def test_formal_blueprint_bytes_are_identical_across_modes(self):
+        payload = Image.new("RGB", (20, 20), "blue")
+        outputs = []
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for mode in ("deconstruct", "bitmap"):
+                project = root / mode
+                (project / ".build" / "design_drafts").mkdir(parents=True)
+                (project / "blueprints").mkdir()
+                payload.save(project / "blueprints" / "S01.png")
+                draft = project / ".build" / "design_drafts" / "S01.png"
+                draft.write_bytes((project / "blueprints" / "S01.png").read_bytes())
+                digest = PIPELINE._sha256_file(draft)
+                (project / ".build" / "visual_manifest.json").write_text(
+                    json.dumps(
+                        {
+                            "pages": {
+                                "S01": {
+                                    "design_draft_sha256": digest,
+                                    "formal_blueprint_sha256": digest,
+                                    "formal_blueprint_path": "blueprints/S01.png",
+                                }
+                            }
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                PIPELINE._materialize_v6_formal_blueprint_manifest(
+                    project, brief(mode)
+                )
+                outputs.append((project / "blueprints" / "S01.png").read_bytes())
+        self.assertEqual(outputs[0], outputs[1])
+
+    def test_nine_page_preprocess_batches_resume_and_isolate_modes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            value = self.make_locked_project(project, page_count=9)
+            first, reusable = PIPELINE._v6_preprocess_batches(
+                project, value, "windows_com_v584"
+            )
+            self.assertEqual([5, 4], [len(item["slide_ids"]) for item in first["batches"]])
+            self.assertEqual(set(), reusable)
+            PIPELINE._complete_v6_preprocess_batches(project, first)
+            second, reusable = PIPELINE._v6_preprocess_batches(
+                project, value, "windows_com_v584"
+            )
+            self.assertEqual(9, len(reusable))
+            self.assertTrue(
+                all(item["preprocess_status"] == "reused" for item in second["batches"])
+            )
+            bitmap = dict(value, construction_mode="bitmap")
+            source = project / ".build" / "blueprint_alignment.json"
+            target = project / ".build" / "bitmap_alignment.json"
+            payload = json.loads(source.read_text(encoding="utf-8"))
+            payload["construction_mode"] = "bitmap"
+            target.write_text(json.dumps(payload), encoding="utf-8")
+            third, reusable = PIPELINE._v6_preprocess_batches(
+                project, bitmap, "windows_com_v584"
+            )
+            self.assertEqual(set(), reusable)
+            self.assertTrue(
+                all(item["preprocess_status"] == "pending" for item in third["batches"])
+            )
+            self.assertFalse(third["whole_deck_build_batched"])
+
+    def test_first_success_locks_the_v6_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            value = self.make_locked_project(project)
+            result = self.run_with_fakes(project, value)
+            self.assertTrue(result["ok"])
+            attempt = json.loads(
+                (project / ".build" / "v6_build_attempt.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual("success", attempt["status"])
+            with self.assertRaisesRegex(ValueError, "build is locked"):
+                self.run_with_fakes(project, value)
+
+    def test_first_catastrophic_failure_allows_exactly_one_repair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            value = self.make_locked_project(project)
+            with self.assertRaisesRegex(RuntimeError, "compile failed"):
+                self.run_with_fakes(
+                    project, value, compile_error=RuntimeError("compile failed")
+                )
+            attempt = json.loads(
+                (project / ".build" / "v6_build_attempt.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual("catastrophic_failed", attempt["status"])
+            result = self.run_with_fakes(project, value, repair=True)
+            self.assertEqual(2, result["build_attempt"])
+            with self.assertRaisesRegex(ValueError, "requires one catastrophic"):
+                self.run_with_fakes(project, value, repair=True)
+
+    def test_second_catastrophic_failure_stops(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            value = self.make_locked_project(project)
+            for repair in (False, True):
+                with self.assertRaises(RuntimeError):
+                    self.run_with_fakes(
+                        project,
+                        value,
+                        compile_error=RuntimeError("compile failed"),
+                        repair=repair,
+                    )
+            with self.assertRaisesRegex(ValueError, "requires one catastrophic"):
+                self.run_with_fakes(project, value, repair=True)
+
+    def test_mac_quality_block_is_recorded_and_repairable_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            value = self.make_locked_project(project)
+            with self.assertRaisesRegex(ValueError, "Mac PPTX audit failed"):
+                self.run_with_fakes(
+                    project,
+                    value,
+                    backend="mac_python_pptx_v2",
+                    mac_status="blocked",
+                )
+            attempt = json.loads(
+                (project / ".build" / "v6_build_attempt.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual("catastrophic_failed", attempt["status"])
+            self.assertEqual("mac_quality", attempt["failed_stage"])
+            result = self.run_with_fakes(
+                project,
+                value,
+                backend="mac_python_pptx_v2",
+                repair=True,
+            )
+            self.assertEqual(2, result["build_attempt"])
+
+
+if __name__ == "__main__":
+    unittest.main()

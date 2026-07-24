@@ -1,4 +1,13 @@
-# PPT quality policy V5.8.4
+# PPT quality policy V6.0
+
+V6 adds a mode-specific catastrophic gate. Deconstruction requires every
+expected element and selected text in OOXML, native editable table/chart/flow
+semantics, and no unapproved image covering 60% or more of the runtime body.
+Bitmap construction requires exactly one hash-identical, zero-crop, maximal
+centered-contain body picture plus five native skeleton text shapes. A failed
+mode never switches to the other mode.
+
+## V5.8.4 compatibility
 
 V5.8.4 retains V5.8.3 intake and the V5.8.2 visual-first default-release policy. It adds one internal post-blueprint alignment stage so display text, visual subjects, and module topology reach the PPT builder.
 

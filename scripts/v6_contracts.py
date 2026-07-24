@@ -15,6 +15,14 @@ CONSTRUCTION_MODE_BITMAP = "bitmap"
 CONSTRUCTION_MODES = frozenset(
     {CONSTRUCTION_MODE_DECONSTRUCT, CONSTRUCTION_MODE_BITMAP}
 )
+CONSTRUCTION_MODE_ALIASES = {
+    "解构": CONSTRUCTION_MODE_DECONSTRUCT,
+    "可编辑": CONSTRUCTION_MODE_DECONSTRUCT,
+    "1": CONSTRUCTION_MODE_DECONSTRUCT,
+    "位图": CONSTRUCTION_MODE_BITMAP,
+    "快速位图": CONSTRUCTION_MODE_BITMAP,
+    "2": CONSTRUCTION_MODE_BITMAP,
+}
 
 DECONSTRUCT_RUNTIME_PAGE_SPECS_PATH = ".build/page_specs.json"
 BITMAP_RUNTIME_PAGE_SPECS_PATH = ".build/bitmap_page_specs.json"
@@ -52,6 +60,16 @@ def construction_mode(brief: dict[str, Any]) -> str | None:
         return None
     value = brief.get("construction_mode")
     return value if value in CONSTRUCTION_MODES else None
+
+
+def normalize_construction_mode(value: Any) -> str | None:
+    """Normalize only the user-facing explicit aliases; never infer a default."""
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if normalized in CONSTRUCTION_MODES:
+        return normalized
+    return CONSTRUCTION_MODE_ALIASES.get(normalized)
 
 
 def validate_v6_brief(brief: dict[str, Any]) -> list[str]:

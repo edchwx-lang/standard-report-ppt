@@ -12,8 +12,9 @@ from typing import Any
 
 
 SCHEMA_VERSION = "5.8"
-SUPPORTED_SCHEMA_VERSIONS = {"5.6", "5.7", "5.8", "5.9"}
+SUPPORTED_SCHEMA_VERSIONS = {"5.6", "5.7", "5.8", "5.9", "6.0"}
 MODERN_SCHEMA_VERSIONS = {"5.8", "5.9"}
+_V6_ASSET_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
 
 def _load_module(name: str, path: Path):
@@ -74,7 +75,10 @@ def _quality():
 
 
 def _valid_crop_visual(visual: Any) -> bool:
-    if not isinstance(visual, dict) or visual.get("disposition") != "crop":
+    if (
+        not isinstance(visual, dict)
+        or visual.get("treatment", visual.get("disposition")) != "crop"
+    ):
         return False
     source_px = visual.get("source_px")
     target = visual.get("target_box_in")
@@ -96,6 +100,218 @@ def _valid_crop_visual(visual: Any) -> bool:
 
 def _literal(value: Any) -> str:
     return pprint.pformat(value, width=120, sort_dicts=False, compact=False)
+
+
+def _v6_project_path(project: Path, relative: Any, expected: str) -> Path:
+    if not isinstance(relative, str) or relative != expected:
+        raise ValueError(f"V6 canonical path must be {expected}")
+    path = (project / relative).resolve()
+    try:
+        path.relative_to(project)
+    except ValueError as exc:
+        raise ValueError("V6 asset path escapes the project") from exc
+    return path
+
+
+def _validate_v6_blueprint_chain(
+    project: Path, brief: dict[str, Any], expected: list[str]
+) -> dict[str, dict[str, str]]:
+    lock = json.loads(
+        (project / ".build" / "formal_blueprint_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    visual = json.loads(
+        (project / ".build" / "visual_manifest.json").read_text(encoding="utf-8")
+    )
+    mode = brief["construction_mode"]
+    if (
+        lock.get("schema_version") != "6.0"
+        or lock.get("pipeline_revision") != "6.0.0"
+        or lock.get("construction_mode") != mode
+        or not isinstance(lock.get("pages"), dict)
+        or set(lock["pages"]) != set(expected)
+        or visual.get("schema_version") != "6.0"
+        or visual.get("pipeline_revision") != "6.0.0"
+        or visual.get("construction_mode") != mode
+        or not isinstance(visual.get("pages"), dict)
+        or set(visual["pages"]) != set(expected)
+    ):
+        raise ValueError("V6 blueprint provenance contract is invalid")
+    records: dict[str, dict[str, str]] = {}
+    for slide_id in expected:
+        draft_relative = f".build/design_drafts/{slide_id}.png"
+        formal_relative = f"blueprints/{slide_id}.png"
+        draft = _v6_project_path(project, draft_relative, draft_relative)
+        formal = _v6_project_path(project, formal_relative, formal_relative)
+        if not draft.is_file() or not formal.is_file():
+            raise FileNotFoundError(f"{slide_id}: immutable blueprint pair is missing")
+        digest = sha256_file(formal)
+        locked = lock["pages"].get(slide_id, {})
+        page = visual["pages"].get(slide_id, {})
+        if (
+            sha256_file(draft) != digest
+            or locked.get("design_draft_path") != draft_relative
+            or locked.get("design_draft_sha256") != digest
+            or locked.get("formal_blueprint_path") != formal_relative
+            or locked.get("formal_blueprint_sha256") != digest
+            or page.get("design_draft_path") != draft_relative
+            or page.get("design_draft_sha256") != digest
+            or page.get("formal_blueprint_path") != formal_relative
+            or page.get("formal_blueprint_sha256") != digest
+        ):
+            raise ValueError(f"{slide_id}: V6 blueprint provenance chain is stale")
+        records[slide_id] = {"path": formal_relative, "sha256": digest}
+    return records
+
+
+def _assert_v6_crop_matches(
+    blueprint_path: Path, asset_path: Path, source_px: Any, label: str
+) -> None:
+    from PIL import Image
+
+    if (
+        not isinstance(source_px, list)
+        or len(source_px) != 4
+        or any(
+            not isinstance(value, int) or isinstance(value, bool)
+            for value in source_px
+        )
+    ):
+        raise ValueError(f"{label}: source_px is invalid")
+    with Image.open(blueprint_path) as source, Image.open(asset_path) as asset:
+        left, top, right, bottom = source_px
+        if not (
+            0 <= left < right <= source.width
+            and 0 <= top < bottom <= source.height
+        ):
+            raise ValueError(f"{label}: crop is outside blueprint")
+        expected = source.crop((left, top, right, bottom)).convert("RGBA")
+        actual = asset.convert("RGBA")
+        if expected.size != actual.size or expected.tobytes() != actual.tobytes():
+            raise ValueError(f"{label}: asset pixels differ from locked blueprint crop")
+
+
+def _validate_v6_deconstruct_assets(
+    project: Path,
+    expected: list[str],
+    page_specs: dict[str, Any],
+    visual: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    crops: dict[str, dict[str, Any]] = {}
+    seen: set[str] = set()
+    for slide_id in expected:
+        page = visual["pages"].get(slide_id, {})
+        visuals = [
+            item
+            for item in page.get("visuals", [])
+            if isinstance(item, dict)
+            and item.get("treatment", item.get("disposition")) == "crop"
+        ]
+        by_asset = {str(item.get("asset_id")): item for item in visuals}
+        if len(by_asset) != len(visuals):
+            raise ValueError(f"{slide_id}: duplicate reviewed crop asset_id")
+        declared = [
+            item
+            for item in page_specs[slide_id].get("elements", [])
+            if isinstance(item, dict) and item.get("type") == "asset"
+        ]
+        for element in declared:
+            asset_id = element.get("asset_id")
+            if not isinstance(asset_id, str) or not _V6_ASSET_ID.fullmatch(asset_id):
+                raise ValueError(f"{slide_id}: unsafe V6 crop asset_id")
+            if asset_id in seen:
+                raise ValueError(f"{slide_id}: crop asset_id is reused across pages")
+            seen.add(asset_id)
+            reviewed = by_asset.get(asset_id)
+            if reviewed is None or not _valid_crop_visual(reviewed):
+                raise ValueError(f"{slide_id}/{asset_id}: reviewed crop is missing")
+            relative = f".build/assets/{slide_id}/{asset_id}.png"
+            declared_path = element.get("asset_path")
+            if declared_path is not None and declared_path != relative:
+                raise ValueError(
+                    f"{slide_id}/{asset_id}: explicit crop path is not canonical"
+                )
+            asset_path = _v6_project_path(project, relative, relative)
+            if not asset_path.is_file():
+                raise FileNotFoundError(asset_path)
+            _assert_v6_crop_matches(
+                project / "blueprints" / f"{slide_id}.png",
+                asset_path,
+                reviewed["source_px"],
+                f"{slide_id}/{asset_id}",
+            )
+            crops[asset_id] = {
+                "slide_id": slide_id,
+                "kind": str(reviewed.get("kind", "")),
+                "source_px": reviewed["source_px"],
+                "target_box_in": reviewed["target_box_in"],
+                "target_coord_space": "body",
+                "fit_mode": "contain",
+                "padding_px": int(reviewed.get("padding_px", 4)),
+            }
+        if set(by_asset) != {
+            str(item.get("asset_id")) for item in declared
+        }:
+            raise ValueError(f"{slide_id}: reviewed crops and page spec assets differ")
+    return crops
+
+
+def _validate_v6_bitmap_assets(
+    project: Path,
+    expected: list[str],
+    page_specs: dict[str, Any],
+    blueprints: dict[str, dict[str, str]],
+) -> None:
+    contract_path = project / ".build" / "bitmap_contract.json"
+    if not contract_path.is_file():
+        raise FileNotFoundError(contract_path)
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    if (
+        contract.get("schema_version") != "6.0"
+        or contract.get("pipeline_revision") != "6.0.0"
+        or contract.get("construction_mode") != "bitmap"
+        or not isinstance(contract.get("pages"), dict)
+        or set(contract["pages"]) != set(expected)
+    ):
+        raise ValueError("V6 bitmap contract is invalid")
+    for slide_id in expected:
+        elements = page_specs[slide_id].get("elements", [])
+        if len(elements) != 1 or not isinstance(elements[0], dict):
+            raise ValueError(f"{slide_id}: bitmap mode requires one body_asset")
+        element = elements[0]
+        asset_id = f"{slide_id}_BODY_BITMAP"
+        relative = f".build/assets/{slide_id}/{asset_id}.png"
+        record = contract["pages"].get(slide_id, {})
+        if (
+            element.get("type") != "body_asset"
+            or element.get("element_id") != asset_id
+            or element.get("asset_id") != asset_id
+            or element.get("asset_path") != relative
+            or element.get("fit") != "contain"
+            or element.get("target") != "runtime_body_box"
+            or "box" in element
+            or record.get("asset_id") != asset_id
+            or record.get("asset_path") != relative
+            or record.get("fit") != "contain"
+            or record.get("target") != "runtime_body_box"
+            or record.get("source_blueprint") != blueprints[slide_id]["path"]
+            or record.get("source_blueprint_sha256")
+            != blueprints[slide_id]["sha256"]
+            or not _V6_ASSET_ID.fullmatch(asset_id)
+        ):
+            raise ValueError(f"{slide_id}: bitmap spec/contract binding is invalid")
+        asset_path = _v6_project_path(project, relative, relative)
+        if not asset_path.is_file() or record.get("asset_sha256") != sha256_file(
+            asset_path
+        ):
+            raise ValueError(f"{slide_id}: bitmap asset hash is stale")
+        _assert_v6_crop_matches(
+            project / blueprints[slide_id]["path"],
+            asset_path,
+            record.get("source_px"),
+            f"{slide_id}/{asset_id}",
+        )
 
 
 def compile_generator_source(
@@ -122,6 +338,7 @@ def compile_generator_source(
     replacements = {
         "__PROJECT_SCHEMA_VERSION__": str(brief["schema_version"]),
         "__PRODUCTION_MODE__": str(brief["production_mode"]),
+        "__CONSTRUCTION_MODE__": str(brief.get("construction_mode", "")),
         "__COMPANY_TEMPLATE_PATH__": master_path.as_posix(),
         "__COMPANY_TEMPLATE_SHA256__": sha256_file(master_path),
     }
@@ -164,12 +381,93 @@ def compile_generator_source(
     return source
 
 
+def _compile_v6_project(project_dir: Path, brief: dict[str, Any]) -> Path:
+    """Compile the additive V6 Windows route without changing V5 rendering."""
+
+    if (
+        brief.get("pipeline_revision") != "6.0.0"
+        or brief.get("production_mode") != "blueprint"
+        or brief.get("construction_mode") not in {"deconstruct", "bitmap"}
+    ):
+        raise ValueError("Windows V6 compiler requires explicit blueprint construction mode")
+    skill_dir = Path(__file__).resolve().parents[1]
+    page_count = int(brief["requested_page_count"])
+    expected = [f"S{index:02d}" for index in range(1, page_count + 1)]
+    slides = json.loads(
+        (project_dir / ".build" / "slides.json").read_text(encoding="utf-8")
+    )
+    if [slide.get("slide_id") for slide in slides] != expected:
+        raise ValueError("slides must match the confirmed canonical order")
+    specs_name = (
+        "page_specs.json"
+        if brief["construction_mode"] == "deconstruct"
+        else "bitmap_page_specs.json"
+    )
+    page_specs = json.loads(
+        (project_dir / ".build" / specs_name).read_text(encoding="utf-8")
+    )
+    if sorted(page_specs) != expected:
+        raise ValueError("page_specs must cover every final slide")
+    blueprints = _validate_v6_blueprint_chain(project_dir, brief, expected)
+    asset_crops: dict[str, dict[str, Any]] = {}
+    if brief["construction_mode"] == "deconstruct":
+        manifest = json.loads(
+            (project_dir / ".build" / "visual_manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        asset_crops = _validate_v6_deconstruct_assets(
+            project_dir, expected, page_specs, manifest
+        )
+    else:
+        _validate_v6_bitmap_assets(project_dir, expected, page_specs, blueprints)
+    template_path = skill_dir / "assets" / "direct_blueprint_generator_template.py"
+    master_path = skill_dir / "assets" / "company_template.pptx"
+    source = compile_generator_source(
+        template_path.read_text(encoding="utf-8"),
+        brief,
+        slides,
+        page_specs,
+        blueprints,
+        asset_crops,
+        master_path,
+    )
+    destination = project_dir / "generate_deck.py"
+    temporary = destination.with_suffix(".py.tmp")
+    compile(source, str(destination), "exec")
+    temporary.write_text(source, encoding="utf-8")
+    temporary.replace(destination)
+    report = {
+        "schema_version": "6.0",
+        "pipeline_revision": "6.0.0",
+        "production_mode": "blueprint",
+        "construction_mode": brief["construction_mode"],
+        "builder_backend": "windows_com_v584",
+        "generator": destination.name,
+        "generator_sha256": sha256_file(destination),
+        "pages": page_count,
+        "assets": sum(
+            1
+            for page in page_specs.values()
+            for element in page.get("elements", [])
+            if element.get("type") in {"asset", "body_asset"}
+        ),
+        "blueprint_hashes": blueprints,
+    }
+    (project_dir / ".build" / "compile_report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return destination
+
+
 def compile_project(project_dir: str | Path) -> Path:
     project_dir = Path(project_dir).resolve()
     skill_dir = Path(__file__).resolve().parents[1]
     brief = json.loads((project_dir / "project_brief.json").read_text(encoding="utf-8"))
     if brief.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS:
         raise ValueError(f"project brief schema_version must be one of {sorted(SUPPORTED_SCHEMA_VERSIONS)}")
+    if brief.get("schema_version") == "6.0":
+        return _compile_v6_project(project_dir, brief)
     quality = _quality()
     diagnostics: list[dict[str, Any]] = []
     if brief["schema_version"] in MODERN_SCHEMA_VERSIONS:

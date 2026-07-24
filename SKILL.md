@@ -3,9 +3,54 @@ name: standard-report-ppt
 description: Use when Codex needs to create, revise, reconstruct, or automate a company fixed-template consulting PowerPoint deck from documents, notes, data, an existing PPTX, or visual references.
 ---
 
-# Standard Report PPT V5.9.6
+# Standard Report PPT V6.0.0-rc1
 
-New projects use `pipeline_revision: "5.9.6"` while V5.9.0, V5.9.1, V5.9.2,
+V6 新项目在页数门禁后必须显式选择一种生产方式；两种方式都必须完成内容解析、逐页 ImageGen 和正式蓝图锁定。单独说“蓝图模式”不是有效选择，ImageGen 不可调用时以 `IMAGEGEN_UNAVAILABLE` 停止。
+
+1. `解构模式（较慢）：逐页拆解蓝图并重建为可编辑 PPT；复杂非原生视觉可保留为局部位图。`
+2. `位图模式（较快）：章节、标题、核心判断、来源和页码可编辑；主体蓝图裁切后作为不可编辑图片放入。`
+
+V6 项目合同：
+
+```json
+{
+  "schema_version": "6.0",
+  "pipeline_revision": "6.0.0",
+  "requested_page_count": 9,
+  "production_mode": "blueprint",
+  "construction_mode": "deconstruct",
+  "blueprint_engine": "builtin_imagegen",
+  "platform_target": "auto",
+  "source_files": ["C:/absolute/path/to/source.docx"]
+}
+```
+
+`construction_mode` 必须显式为 `deconstruct` 或 `bitmap`，不设默认值。V6 禁止 `fast`，也禁止两个生产方式互相静默降级。蓝图锁定前的内容、证据、写作、提示词、每页一次成功蓝图和一次无产物传输重试保持不变；`construction_mode` 只进入蓝图锁定后的缓存键。
+
+- Windows 两种方式均使用 `windows_com_v584`。
+- macOS 两种方式均使用 `mac_python_pptx_v2`。
+- 解构模式使用全页及 Q1–Q4 审查、完整解析、原生对象重建和 `DECONSTRUCTION_EDITABILITY_FAILED` 门禁。
+- 位图模式只使用逐页全图审查，裁掉固定骨架后以 maximal centered contain 放置一个主体图片，并保留五层骨架文字可编辑。
+- V6 为 RC：Windows 与 OOXML 自动测试是发布门槛；真实 PowerPoint for Mac 的生成、打开、渲染和编辑冒烟测试通过后才标记正式 V6.0.0。
+
+CLI：
+
+```powershell
+python scripts/project_pipeline.py <project> --prepare-visual-review
+python scripts/project_pipeline.py <project> --prepare-bitmap-review
+python scripts/project_pipeline.py <project> --run
+```
+
+V6 post-lock resources are mandatory: `prompts/deconstruction_alignment_prompt.md`,
+`prompts/bitmap_alignment_prompt.md`, `scripts/v6_contracts.py`,
+`scripts/v6_blueprint_gate.py`, `scripts/v6_bitmap.py`,
+`scripts/v6_deconstruction.py`, `scripts/v6_mac_spec.py`,
+`scripts/v6_editability_audit.py`, `scripts/project_compiler_mac_v2.py`, and
+`assets/python_pptx_generator_template_v2.py`.
+
+# Standard Report PPT V5.9.6 compatibility
+
+Existing V5.9.6 projects use `pipeline_revision: "5.9.6"` while V5.9.0, V5.9.1, V5.9.2,
 V5.9.4, and V5.9.5 projects remain readable with their existing behavior. The Windows
 COM and macOS python-pptx backends are unchanged.
 
@@ -371,7 +416,7 @@ Before opening PowerPoint, inspect `.build/layout_precheck.json`. It warns about
 
 After Python production, use one terminal sequence: `project_pipeline.py --run` builds, renders, and writes all audits plus `.build/quality_report.json`; immediately inspect `.build/rendered/current`; then call `pack_delivery.py` once. V5.7 compatibility packaging retains its historical strict behavior. Any change after visual inspection requires one new `--run` before packaging.
 
-## Fast mode
+## V5.9.x fast mode compatibility
 
 Fast mode skips ImageGen and may select deterministic body grids. It starts through `project_pipeline.py --init`, writes UTF-8 content/page manifests, and uses the same compiled COM runtime, skeleton, components, effects cleanup, evidence contract, editability, rendering, text audit, and QA. Reject `?{3,}`, `�`, C1 controls, and common mojibake before PowerPoint opens and again by scanning final PPTX XML.
 

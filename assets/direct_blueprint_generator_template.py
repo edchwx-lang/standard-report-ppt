@@ -17,6 +17,7 @@ from pathlib import Path
 DECK_META = {
     "schema_version": "__PROJECT_SCHEMA_VERSION__",
     "production_mode": "__PRODUCTION_MODE__",
+    "construction_mode": "__CONSTRUCTION_MODE__",
     "page_count": 0,  # __PAGE_COUNT__
     "slide_size": "16:9",
     "template_path": "__COMPANY_TEMPLATE_PATH__",
@@ -963,6 +964,61 @@ def add_blueprint_asset(
     return shape
 
 
+def add_body_asset(
+    slide,
+    project_dir: Path,
+    element: dict,
+    body: dict[str, float],
+    slide_id: str,
+):
+    """Place the reviewed V6 body bitmap as exact maximal centered contain."""
+
+    if (
+        DECK_META.get("schema_version") != "6.0"
+        or DECK_META.get("construction_mode") != "bitmap"
+        or element.get("fit") != "contain"
+        or element.get("target") != "runtime_body_box"
+    ):
+        raise ValueError("body_asset is reserved for V6 bitmap construction")
+    asset_id = f"{slide_id}_BODY_BITMAP"
+    relative = f".build/assets/{slide_id}/{asset_id}.png"
+    if (
+        element.get("element_id") != asset_id
+        or element.get("asset_id") != asset_id
+        or element.get("asset_path") != relative
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", asset_id)
+        or "box" in element
+    ):
+        raise ValueError("body_asset does not match the canonical bitmap contract")
+    image_path = (project_dir / relative).resolve()
+    if not image_path.is_relative_to(project_dir.resolve()) or not image_path.is_file():
+        raise FileNotFoundError(image_path)
+    from PIL import Image
+
+    with Image.open(image_path) as image:
+        placement = contain_rect(
+            image.size,
+            [body["left"], body["top"], body["width"], body["height"]],
+        )
+    x, y, w, h = placement
+    shape = slide.Shapes.AddPicture(
+        str(image_path), 0, -1, inches(x), inches(y), inches(w), inches(h)
+    )
+    clear_shape_effects(shape)
+    return shape
+
+
+def _name_new_element_shapes(slide, first_index: int, element_id: str) -> None:
+    if DECK_META.get("schema_version") != "6.0":
+        return
+    if not isinstance(element_id, str) or not element_id:
+        raise ValueError("V6 page element requires stable element_id")
+    for number, shape_index in enumerate(
+        range(first_index, slide.Shapes.Count + 1), start=1
+    ):
+        slide.Shapes(shape_index).Name = f"EL_{element_id}_{number}"
+
+
 def add_line(
     slide,
     x1: float,
@@ -1058,6 +1114,8 @@ def render_page_spec(slide, page_spec: dict, body: dict[str, float], project_dir
         if not isinstance(element, dict):
             raise ValueError(f"{slide_id}/element[{index}]: must be a mapping")
         kind = element.get("type")
+        first_shape_index = slide.Shapes.Count + 1
+        element_id = element.get("element_id")
         if kind == "asset":
             target_box = list(_element_box(element, body))
             shape = add_blueprint_asset(
@@ -1074,6 +1132,11 @@ def render_page_spec(slide, page_spec: dict, body: dict[str, float], project_dir
             ):
                 x, y, w, h = _element_box(element, body)
                 add_native_visual_fallback(slide, str(element["asset_id"]), x, y, w, h)
+            _name_new_element_shapes(slide, first_shape_index, element_id)
+            continue
+        if kind == "body_asset":
+            add_body_asset(slide, project_dir, element, body, slide_id)
+            _name_new_element_shapes(slide, first_shape_index, element_id)
             continue
         x, y, w, h = _element_box(element, body)
         if kind == "section_header":
@@ -1135,6 +1198,7 @@ def render_page_spec(slide, page_spec: dict, body: dict[str, float], project_dir
             add_matrix(slide, list(element.get("headers", [])), list(element.get("rows", [])), x, y, w, h)
         else:
             raise ValueError(f"{slide_id}/element[{index}]: unsupported type {kind!r}")
+        _name_new_element_shapes(slide, first_shape_index, element_id)
 
 
 # __PAGE_BUILDERS__
@@ -1218,7 +1282,7 @@ def validate_embedded_contract(
                 blueprint = project_dir / record["path"]
                 if not blueprint.is_file() or sha256_file(blueprint) != record["sha256"]:
                     raise ValueError(f"{slide_id}: blueprint file/hash mismatch")
-        if DECK_META.get("schema_version") not in {"5.8", "5.9"}:
+        if DECK_META.get("schema_version") not in {"5.8", "5.9", "6.0"}:
             for spec in SLIDES:
                 review = spec.get("visual_review")
                 visuals = spec.get("complex_visuals")
@@ -1232,7 +1296,7 @@ def validate_embedded_contract(
                     raise ValueError(f"{spec['slide_id']}: reviewed_no_raster requires an empty complex_visuals list")
     if not set(selected_ids).issubset(PAGE_BUILDERS):
         raise ValueError("PAGE_BUILDERS must contain every selected page-specific builder")
-    if DECK_META.get("schema_version") not in {"5.8", "5.9"}:
+    if DECK_META.get("schema_version") not in {"5.8", "5.9", "6.0"}:
         for spec in SLIDES:
             points = spec.get("core_points", [])
             total = sum(visible_character_count(point) for point in points)

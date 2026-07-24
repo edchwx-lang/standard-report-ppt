@@ -1,4 +1,13 @@
-# Python reconstruction rules V5.9.1
+# Python reconstruction rules V6.0
+
+V6 selects reconstruction only after immutable blueprint locking.
+`deconstruct` produces stable `EL_<element_id>_<n>` native objects and fails
+instead of substituting a body screenshot. `bitmap` accepts exactly one
+`body_asset` per page and preserves the five fixed skeleton regions as native
+editable text. Both backends use the same runtime body box and zero-crop
+centered-contain rule.
+
+## V5.9.1 compatibility
 
 - Validate the reviewed `reconstruction_contract` before opening either local builder.
 - Bind every visible module to stable page-spec `element_id` values.

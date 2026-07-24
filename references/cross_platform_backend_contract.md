@@ -1,4 +1,29 @@
-# V5.9.1 Cross-Platform Backend Contract
+# V6.0 Cross-Platform Backend Contract
+
+V6 keeps source ingestion, canonical authoring, ImageGen prompting, one successful
+artifact per page, the single no-artifact transport retry, and immutable formal
+blueprint locking unchanged. After locking, `construction_mode` selects
+`deconstruct` or `bitmap`; it never selects whether ImageGen runs.
+
+| construction mode | Windows | macOS |
+|---|---|---|
+| `deconstruct` | `windows_com_v584` | `mac_python_pptx_v2` |
+| `bitmap` | `windows_com_v584` | `mac_python_pptx_v2` |
+
+Deconstruction must pass both the prebuild composite-body-image prohibition and
+the postbuild native editability audit. Unsupported Mac structures fail with
+`MAC_RECONSTRUCTION_UNSUPPORTED`; they are not replaced by a page-body bitmap.
+
+Bitmap construction contains exactly one reviewed body image per page. Its
+runtime box uses `SKEL_CORE.left/width`, top `SKEL_CORE.bottom + 0.12in`, and
+bottom `SKEL_SOURCE.top - 0.195in`. The image is zero-crop maximal centered
+contain. `SKEL_CHAPTER`, `SKEL_TITLE`, `SKEL_CORE`, `SKEL_SOURCE`, and
+`SKEL_PAGE_NUMBER` remain native text shapes.
+
+V6 is released first as `6.0.0-rc1`; a real PowerPoint for Mac smoke test is
+required before the final `6.0.0` label.
+
+## V5.9.1 compatibility
 
 V5.9.1 retains both local V5.9 backends and adds one shared reconstruction
 contract before platform dispatch. Windows remains `windows_com_v584`; macOS

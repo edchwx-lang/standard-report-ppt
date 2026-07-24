@@ -42,6 +42,25 @@ SUPPORTED_ELEMENT_TYPES = {
         "flow",
         "matrix",
     },
+    "mac_python_pptx_v2": {
+        "asset",
+        "section_header",
+        "text",
+        "rect",
+        "oval",
+        "line",
+        "arrow",
+        "text_card",
+        "metric_strip",
+        "hbar_chart",
+        "column_chart",
+        "line_chart",
+        "combo_chart",
+        "donut_chart",
+        "grouped_hbar_chart",
+        "flow",
+        "matrix",
+    },
 }
 
 CHART_TYPES = {

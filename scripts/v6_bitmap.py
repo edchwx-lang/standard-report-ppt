@@ -231,7 +231,11 @@ def _read_alignment(project: Path) -> dict[str, Any]:
     return payload
 
 
-def materialize_bitmap_assets(project_dir: str | Path) -> dict[str, Any]:
+def materialize_bitmap_assets(
+    project_dir: str | Path,
+    *,
+    reuse_slide_ids: set[str] | None = None,
+) -> dict[str, Any]:
     """Crop one reviewed bitmap body asset and runtime element per page."""
     project = Path(project_dir).resolve()
     alignment = _read_alignment(project)
@@ -247,6 +251,7 @@ def materialize_bitmap_assets(project_dir: str | Path) -> dict[str, Any]:
 
     contract_pages: dict[str, Any] = {}
     page_specs: dict[str, Any] = {}
+    reused = reuse_slide_ids or set()
     for slide_id, review_record in records.items():
         blueprint = project / review_record["blueprint_path"]
         source_px = alignment["pages"][slide_id]["source_px"]
@@ -254,7 +259,17 @@ def materialize_bitmap_assets(project_dir: str | Path) -> dict[str, Any]:
         asset = project / ".build" / "assets" / slide_id / f"{asset_id}.png"
         asset.parent.mkdir(parents=True, exist_ok=True)
         with Image.open(blueprint) as image:
-            image.crop(tuple(source_px)).save(asset)
+            expected = image.crop(tuple(source_px)).convert("RGBA")
+            if slide_id in reused and asset.is_file():
+                with Image.open(asset) as existing:
+                    actual = existing.convert("RGBA")
+                    if (
+                        expected.size != actual.size
+                        or expected.tobytes() != actual.tobytes()
+                    ):
+                        expected.save(asset)
+            else:
+                expected.save(asset)
         asset_path = asset.relative_to(project).as_posix()
         contract_pages[slide_id] = {
             "asset_id": asset_id,
