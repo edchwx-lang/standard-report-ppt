@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import tempfile
@@ -8,6 +9,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def load_module(name: str, path: Path):
@@ -53,7 +58,6 @@ class V6MacSpecTests(unittest.TestCase):
                         "absolute_box": [2.5, 2.0, 1.0, 0.6],
                         "fill": "abcdef",
                         "line_color": "#001122",
-                        "vertical_alignment": 3,
                     },
                     {
                         "type": "asset",
@@ -91,7 +95,6 @@ class V6MacSpecTests(unittest.TestCase):
         self.assertEqual("absolute", rect["coord_space"])
         self.assertEqual("#ABCDEF", rect["fill"])
         self.assertEqual("#001122", rect["line_color"])
-        self.assertEqual("middle", rect["vertical_alignment"])
         self.assertEqual("contain", asset["fit"])
         self.assertEqual(20, combo["data"][0]["line_value"])
         self.assertTrue(report["ok"])
@@ -145,6 +148,124 @@ class V6MacSpecTests(unittest.TestCase):
         repeated["S01"]["elements"][0]["color"] = "not-a-color"
         with self.assertRaisesRegex(ValueError, "MAC_RECONSTRUCTION_UNSUPPORTED"):
             self.module.normalize_mac_page_specs(repeated, "deconstruct")
+
+    def test_style_contract_accepts_rendered_fields_and_rejects_ignored_style(self):
+        valid = {
+            "S01": {
+                "elements": [
+                    {
+                        "type": "text_card",
+                        "element_id": "CARD",
+                        "box": [0, 0, 3, 1],
+                        "title": "Finding",
+                        "body": "Evidence",
+                        "title_fill": "#112233",
+                        "body_fill": "#F1F2F3",
+                        "title_color": "#FF0000",
+                        "body_color": "#008000",
+                    },
+                    {
+                        "type": "metric_strip",
+                        "element_id": "METRICS",
+                        "box": [3, 0, 3, 1],
+                        "metrics": [
+                            {
+                                "label": "Growth",
+                                "value": "20%",
+                                "value_color": "#123456",
+                                "label_color": "#654321",
+                            }
+                        ],
+                    },
+                    {
+                        "type": "flow",
+                        "element_id": "FLOW",
+                        "box": [0, 1.2, 6, 1],
+                        "steps": [
+                            {
+                                "title": "Discover",
+                                "body": "Evidence",
+                                "detail": "Caveat",
+                                "title_color": "#ABCDEF",
+                                "body_color": "#234567",
+                            },
+                            {"title": "Decide", "body": "Action"},
+                        ],
+                    },
+                    {
+                        "type": "column_chart",
+                        "element_id": "CHART",
+                        "box": [6, 0, 3, 2],
+                        "style": 12,
+                        "data": [{"label": "A", "value": 1}],
+                    },
+                ]
+            }
+        }
+        normalized, _ = self.module.normalize_mac_page_specs(
+            valid, "deconstruct"
+        )
+        self.assertEqual(
+            "#FF0000", normalized["S01"]["elements"][0]["title_color"]
+        )
+        self.assertEqual(
+            "#123456",
+            normalized["S01"]["elements"][1]["metrics"][0]["value_color"],
+        )
+        self.assertEqual(
+            "#234567",
+            normalized["S01"]["elements"][2]["steps"][0]["body_color"],
+        )
+        self.assertEqual(12, normalized["S01"]["elements"][3]["style"])
+
+        invalid_elements = (
+            {
+                "type": "text",
+                "element_id": "TEXT",
+                "box": [0, 0, 2, 1],
+                "text": "No silent style",
+                "style": {"font": "ignored"},
+            },
+            {
+                "type": "column_chart",
+                "element_id": "CHART_TEXT_STYLE",
+                "box": [0, 0, 2, 1],
+                "style": "12",
+                "data": [{"label": "A", "value": 1}],
+            },
+            {
+                "type": "column_chart",
+                "element_id": "CHART_RANGE",
+                "box": [0, 0, 2, 1],
+                "style": 99,
+                "data": [{"label": "A", "value": 1}],
+            },
+            {
+                "type": "metric_strip",
+                "element_id": "METRIC_STYLE",
+                "box": [0, 0, 2, 1],
+                "metrics": [
+                    {"label": "A", "value": 1, "style": "ignored"}
+                ],
+            },
+            {
+                "type": "flow",
+                "element_id": "FLOW_STYLE",
+                "box": [0, 0, 3, 1],
+                "steps": [
+                    {"title": "A", "body": "B", "style": "ignored"},
+                    {"title": "C", "body": "D"},
+                ],
+            },
+        )
+        for element in invalid_elements:
+            with self.subTest(element=element["element_id"]):
+                with self.assertRaisesRegex(
+                    ValueError, "MAC_RECONSTRUCTION_UNSUPPORTED"
+                ):
+                    self.module.normalize_mac_page_specs(
+                        {"S01": {"elements": [element]}}, "deconstruct"
+                    )
 
     def test_real_contract_payloads_are_normalized_and_malformed_payloads_block(self):
         valid = {
@@ -358,6 +479,20 @@ class V6MacSpecTests(unittest.TestCase):
             self.assertEqual("#123456", output["S01"]["elements"][0]["color"])
             self.assertEqual(report, persisted)
             self.assertEqual("mac_python_pptx_v2", report["builder_backend"])
+            self.assertEqual("pass", report["status"])
+            self.assertEqual(".build/page_specs.json", report["source_path"])
+            self.assertEqual(
+                sha256_file(build / "page_specs.json"),
+                report["source_sha256"],
+            )
+            self.assertEqual(
+                ".build/mac_page_specs.json",
+                report["normalized_path"],
+            )
+            self.assertEqual(
+                sha256_file(build / "mac_page_specs.json"),
+                report["normalized_sha256"],
+            )
 
 
 if __name__ == "__main__":

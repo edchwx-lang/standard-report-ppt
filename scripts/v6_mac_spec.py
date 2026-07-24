@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from copy import deepcopy
@@ -42,10 +43,104 @@ _COLOR_KEYS = frozenset(
         "line_color",
         "title_fill",
         "title_color",
+        "body_color",
         "value_color",
         "label_color",
     }
 )
+_STYLE_KEYS = frozenset(
+    {
+        "style",
+        "color",
+        "fill",
+        "line",
+        "line_color",
+        "title_fill",
+        "body_fill",
+        "title_color",
+        "body_color",
+        "value_color",
+        "label_color",
+        "font_size",
+        "bold",
+        "align",
+        "alignment",
+        "text_align",
+        "valign",
+        "vertical_align",
+        "vertical_alignment",
+        "vertical_anchor",
+        "margin_left",
+        "margin_right",
+        "margin_top",
+        "margin_bottom",
+        "weight",
+        "show_legend",
+    }
+)
+_ELEMENT_STYLE_KEYS = {
+    "section_header": frozenset({"color", "font_size"}),
+    "text": frozenset(
+        {
+            "color",
+            "fill",
+            "line",
+            "font_size",
+            "bold",
+            "align",
+            "valign",
+            "vertical_alignment",
+            "margin_left",
+            "margin_right",
+            "margin_top",
+            "margin_bottom",
+        }
+    ),
+    "rect": frozenset({"fill", "line", "line_color"}),
+    "oval": frozenset(
+        {
+            "fill",
+            "line",
+            "line_color",
+            "color",
+            "font_size",
+            "bold",
+            "align",
+            "valign",
+            "vertical_alignment",
+            "margin_left",
+            "margin_right",
+            "margin_top",
+            "margin_bottom",
+        }
+    ),
+    "line": frozenset({"color", "weight"}),
+    "arrow": frozenset({"color", "weight"}),
+    "text_card": frozenset(
+        {"title_fill", "body_fill", "title_color", "body_color"}
+    ),
+    "metric_strip": frozenset(),
+    "hbar_chart": frozenset({"style", "show_legend"}),
+    "column_chart": frozenset({"style", "show_legend"}),
+    "line_chart": frozenset({"style", "show_legend"}),
+    "combo_chart": frozenset({"style", "show_legend"}),
+    "donut_chart": frozenset({"style", "show_legend"}),
+    "grouped_hbar_chart": frozenset({"style", "show_legend"}),
+    "flow": frozenset(),
+    "matrix": frozenset(),
+    "asset": frozenset(),
+}
+_FLOW_STEP_STYLE_KEYS = frozenset(
+    {
+        "title_fill",
+        "body_fill",
+        "fill",
+        "line_color",
+        "title_color",
+        "body_color",
+    }
+)
+_METRIC_STYLE_KEYS = frozenset({"color", "value_color", "label_color"})
 _HORIZONTAL_ALIGNMENT_KEYS = frozenset({"align", "alignment", "text_align"})
 _VERTICAL_ALIGNMENT_KEYS = frozenset(
     {"valign", "vertical_align", "vertical_alignment", "vertical_anchor"}
@@ -97,6 +192,10 @@ def _write_json_atomic(path: Path, value: Any) -> None:
         encoding="utf-8",
     )
     temporary.replace(path)
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _normalize_color(value: Any) -> str:
@@ -352,6 +451,58 @@ def _validate_payload(element: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _validate_style_contract(element: dict[str, Any]) -> list[str]:
+    kind = str(element.get("type", ""))
+    allowed = _ELEMENT_STYLE_KEYS.get(kind, frozenset())
+    errors = [
+        f"{kind} does not support style field {key!r}"
+        for key in element
+        if key in _STYLE_KEYS and key not in allowed
+    ]
+    if kind in {
+        "hbar_chart",
+        "column_chart",
+        "line_chart",
+        "combo_chart",
+        "donut_chart",
+        "grouped_hbar_chart",
+    } and "style" in element:
+        style = element["style"]
+        if (
+            not isinstance(style, int)
+            or isinstance(style, bool)
+            or not 1 <= style <= 48
+        ):
+            errors.append(f"{kind} style must be an integer from 1 to 48")
+    if kind == "flow" and isinstance(element.get("steps"), list):
+        for index, step in enumerate(element["steps"]):
+            if not isinstance(step, dict):
+                continue
+            unsupported = [
+                key
+                for key in step
+                if key in _STYLE_KEYS and key not in _FLOW_STEP_STYLE_KEYS
+            ]
+            errors.extend(
+                f"flow steps[{index}] does not support style field {key!r}"
+                for key in unsupported
+            )
+    if kind == "metric_strip" and isinstance(element.get("metrics"), list):
+        for index, metric in enumerate(element["metrics"]):
+            if not isinstance(metric, dict):
+                continue
+            unsupported = [
+                key
+                for key in metric
+                if key in _STYLE_KEYS and key not in _METRIC_STYLE_KEYS
+            ]
+            errors.extend(
+                f"metric_strip metrics[{index}] does not support style field {key!r}"
+                for key in unsupported
+            )
+    return errors
+
+
 def _report(
     mode: str,
     normalized_pages: list[str],
@@ -364,6 +515,7 @@ def _report(
         "pipeline_revision": PIPELINE_REVISION,
         "construction_mode": mode,
         "builder_backend": BUILDER_BACKEND,
+        "status": "blocked" if blockers else "pass",
         "ok": not blockers,
         "pages": normalized_pages,
         "element_count": element_count,
@@ -462,6 +614,7 @@ def normalize_mac_page_specs(
                     )
                     continue
                 payload_errors = _validate_payload(element)
+                payload_errors.extend(_validate_style_contract(element))
                 if payload_errors:
                     blockers.extend(
                         _issue(slide_id, element_id, message)
@@ -503,6 +656,7 @@ def normalize_mac_page_specs(
                     continue
                 element["fit"] = "contain"
             payload_errors = _validate_payload(element)
+            payload_errors.extend(_validate_style_contract(element))
             if payload_errors:
                 blockers.extend(
                     _issue(slide_id, element_id, message)
@@ -553,8 +707,24 @@ def materialize_mac_page_specs(project_dir: str | Path) -> dict[str, Any]:
     try:
         normalized, report = normalize_mac_page_specs(page_specs, str(mode))
     except MacSpecError as exc:
-        _write_json_atomic(project / ".build" / "mac_spec_report.json", exc.report)
+        blocked = dict(
+            exc.report,
+            source_path=f".build/{source_name}",
+            source_sha256=_sha256_file(source_path),
+            normalized_path=".build/mac_page_specs.json",
+            normalized_sha256=None,
+        )
+        _write_json_atomic(project / ".build" / "mac_spec_report.json", blocked)
         raise
-    _write_json_atomic(project / ".build" / "mac_page_specs.json", normalized)
+    normalized_path = project / ".build" / "mac_page_specs.json"
+    _write_json_atomic(normalized_path, normalized)
+    report.update(
+        {
+            "source_path": f".build/{source_name}",
+            "source_sha256": _sha256_file(source_path),
+            "normalized_path": ".build/mac_page_specs.json",
+            "normalized_sha256": _sha256_file(normalized_path),
+        }
+    )
     _write_json_atomic(project / ".build" / "mac_spec_report.json", report)
     return report

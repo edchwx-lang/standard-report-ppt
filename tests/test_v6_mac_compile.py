@@ -53,8 +53,12 @@ class V6MacCompileTests(unittest.TestCase):
         build = project / ".build"
         build.mkdir()
         (project / "blueprints").mkdir()
+        (build / "design_drafts").mkdir()
         Image.new("RGB", (1600, 900), "#ddeeff").save(
             project / "blueprints" / "S01.png"
+        )
+        (build / "design_drafts" / "S01.png").write_bytes(
+            (project / "blueprints" / "S01.png").read_bytes()
         )
         blueprint_hash = sha256_file(project / "blueprints" / "S01.png")
         source = project / "source.txt"
@@ -90,7 +94,7 @@ class V6MacCompileTests(unittest.TestCase):
                     "schema_version": "6.0",
                     "pages": {
                         "S01": {
-                            "design_draft_path": "blueprints/S01.png",
+                            "design_draft_path": ".build/design_drafts/S01.png",
                             "design_draft_sha256": blueprint_hash,
                             "formal_blueprint_path": "blueprints/S01.png",
                             "formal_blueprint_sha256": blueprint_hash,
@@ -111,9 +115,11 @@ class V6MacCompileTests(unittest.TestCase):
                 "formal_blueprint_manifest.json",
                 {
                     "schema_version": "6.0",
+                    "pipeline_revision": "6.0.0",
+                    "construction_mode": mode,
                     "pages": {
                         "S01": {
-                            "design_draft_path": "blueprints/S01.png",
+                            "design_draft_path": ".build/design_drafts/S01.png",
                             "design_draft_sha256": blueprint_hash,
                             "formal_blueprint_path": "blueprints/S01.png",
                             "formal_blueprint_sha256": blueprint_hash,
@@ -137,6 +143,16 @@ class V6MacCompileTests(unittest.TestCase):
             font_catalog={"Microsoft YaHei": (portable_font_path(), 0)},
         )
         return generator, output
+
+    def _materialize_deconstruct(self, project: Path, elements: list[dict]) -> None:
+        (project / ".build" / "page_specs.json").write_text(
+            json.dumps({"S01": {"elements": elements}}),
+            encoding="utf-8",
+        )
+        load_module(
+            f"v6_mac_spec_materialize_{id(project)}",
+            ROOT / "scripts" / "v6_mac_spec.py",
+        ).materialize_mac_page_specs(project)
 
     def test_v1_files_remain_byte_identical(self):
         self.assertEqual(
@@ -214,7 +230,11 @@ class V6MacCompileTests(unittest.TestCase):
                 "element_id": "E_FLOW",
                 "module_id": "flow",
                 "steps": [
-                    {"title": "First", "body": "Evidence"},
+                    {
+                        "title": "First",
+                        "body": "Evidence",
+                        "detail": "Caveat",
+                    },
                     {"label": "Second", "detail": "Decision"},
                     {"title": "Third", "body": "Action"},
                 ],
@@ -305,6 +325,7 @@ class V6MacCompileTests(unittest.TestCase):
             shape.text for shape in flow if getattr(shape, "has_text_frame", False)
         )
         self.assertIn("Evidence", flow_text)
+        self.assertIn("Caveat", flow_text)
         self.assertIn("Decision", flow_text)
         picture = next(
             shape
@@ -358,6 +379,124 @@ class V6MacCompileTests(unittest.TestCase):
         self.assertEqual("6.0", compile_report["schema_version"])
         self.assertEqual("deconstruct", compile_report["construction_mode"])
         self.assertEqual("mac_python_pptx_v2", compile_report["builder_backend"])
+
+    def test_supported_styles_are_applied_and_flow_preserves_body_and_detail(self):
+        project = self._project("deconstruct")
+        self._materialize_deconstruct(
+            project,
+            [
+                {
+                    "type": "text_card",
+                    "element_id": "CARD",
+                    "box": [0.1, 0.1, 3.0, 1.2],
+                    "title": "Styled title",
+                    "body": "Styled body",
+                    "title_fill": "#112233",
+                    "body_fill": "#F1F2F3",
+                    "title_color": "#FF0000",
+                    "body_color": "#008000",
+                },
+                {
+                    "type": "metric_strip",
+                    "element_id": "METRIC",
+                    "box": [3.3, 0.1, 2.5, 0.9],
+                    "metrics": [
+                        {
+                            "label": "Styled label",
+                            "value": "42%",
+                            "value_color": "#123456",
+                            "label_color": "#654321",
+                        }
+                    ],
+                },
+                {
+                    "type": "flow",
+                    "element_id": "FLOW",
+                    "box": [0.1, 1.6, 6.0, 1.0],
+                    "steps": [
+                        {
+                            "title": "Discover",
+                            "body": "Evidence",
+                            "detail": "Caveat",
+                            "title_color": "#ABCDEF",
+                            "body_color": "#234567",
+                        },
+                        {"title": "Decide", "body": "Action"},
+                    ],
+                },
+                {
+                    "type": "column_chart",
+                    "element_id": "CHART",
+                    "box": [6.3, 0.1, 3.0, 2.4],
+                    "style": 12,
+                    "data": [{"label": "A", "value": 1}],
+                },
+            ],
+        )
+        _, output = self._compile_and_build(project)
+        slide = Presentation(output).slides[0]
+
+        def text_shape(text: str):
+            return next(
+                shape
+                for shape in slide.shapes
+                if getattr(shape, "has_text_frame", False) and shape.text == text
+            )
+
+        self.assertEqual(
+            "FF0000",
+            str(
+                text_shape("Styled title")
+                .text_frame.paragraphs[0]
+                .runs[0]
+                .font.color.rgb
+            ),
+        )
+        self.assertEqual(
+            "008000",
+            str(
+                text_shape("Styled body")
+                .text_frame.paragraphs[0]
+                .runs[0]
+                .font.color.rgb
+            ),
+        )
+        self.assertEqual(
+            "123456",
+            str(
+                text_shape("42%")
+                .text_frame.paragraphs[0]
+                .runs[0]
+                .font.color.rgb
+            ),
+        )
+        self.assertEqual(
+            "654321",
+            str(
+                text_shape("Styled label")
+                .text_frame.paragraphs[0]
+                .runs[0]
+                .font.color.rgb
+            ),
+        )
+        detail_shape = text_shape("Evidence\nCaveat")
+        self.assertEqual(
+            "234567",
+            str(
+                detail_shape.text_frame.paragraphs[0].runs[0].font.color.rgb
+            ),
+        )
+        self.assertEqual(
+            "ABCDEF",
+            str(
+                text_shape("Discover")
+                .text_frame.paragraphs[0]
+                .runs[0]
+                .font.color.rgb
+            ),
+        )
+        chart = next(shape.chart for shape in slide.shapes if shape.has_chart)
+        self.assertEqual(12, chart.chart_style)
 
     def test_bitmap_build_uses_exact_runtime_body_contain_and_editable_skeleton(self):
         project = self._project("bitmap")
@@ -538,6 +677,118 @@ class V6MacCompileTests(unittest.TestCase):
             project / "blueprints" / "S01.png"
         )
         with self.assertRaisesRegex(ValueError, "MAC_BLUEPRINT_HASH_MISMATCH"):
+            compiler.compile_project(project)
+
+    def test_compiler_binds_formal_blueprint_to_original_design_draft(self):
+        compiler = load_module(
+            "v6_mac_compiler_blueprint_provenance",
+            ROOT / "scripts" / "project_compiler_mac_v2.py",
+        )
+        project = self._project("deconstruct")
+        self._materialize_deconstruct(
+            project,
+            [
+                {
+                    "type": "text",
+                    "element_id": "TEXT",
+                    "text": "Locked",
+                    "box": [0, 0, 2, 1],
+                }
+            ],
+        )
+        Image.new("RGB", (1600, 900), "red").save(
+            project / "blueprints" / "S01.png"
+        )
+        replacement_hash = sha256_file(project / "blueprints" / "S01.png")
+        for name in (
+            "formal_blueprint_manifest.json",
+            "visual_manifest.json",
+        ):
+            path = project / ".build" / name
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            page = payload["pages"]["S01"]
+            page["design_draft_sha256"] = replacement_hash
+            page["formal_blueprint_sha256"] = replacement_hash
+            path.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "MAC_BLUEPRINT_HASH_MISMATCH"):
+            compiler.compile_project(project)
+
+    def test_compiler_validates_formal_manifest_revision_mode_and_paths(self):
+        compiler = load_module(
+            "v6_mac_compiler_formal_manifest_contract",
+            ROOT / "scripts" / "project_compiler_mac_v2.py",
+        )
+        for field, value in (
+            ("pipeline_revision", "6.0.1"),
+            ("construction_mode", "bitmap"),
+        ):
+            project = self._project("deconstruct")
+            self._materialize_deconstruct(
+                project,
+                [
+                    {
+                        "type": "text",
+                        "element_id": "TEXT",
+                        "text": "Locked",
+                        "box": [0, 0, 2, 1],
+                    }
+                ],
+            )
+            path = project / ".build" / "formal_blueprint_manifest.json"
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload[field] = value
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(
+                    ValueError, "MAC_V6_CONTRACT_INVALID"
+                ):
+                    compiler.compile_project(project)
+
+        project = self._project("deconstruct")
+        self._materialize_deconstruct(
+            project,
+            [
+                {
+                    "type": "text",
+                    "element_id": "TEXT",
+                    "text": "Locked",
+                    "box": [0, 0, 2, 1],
+                }
+            ],
+        )
+        path = project / ".build" / "formal_blueprint_manifest.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["pages"]["S01"]["design_draft_path"] = "blueprints/S01.png"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "MAC_BLUEPRINT_HASH_MISMATCH"):
+            compiler.compile_project(project)
+
+    def test_compiler_rederives_mac_spec_and_checks_materialization_report(self):
+        compiler = load_module(
+            "v6_mac_compiler_spec_derivation",
+            ROOT / "scripts" / "project_compiler_mac_v2.py",
+        )
+        project = self._project("deconstruct")
+        self._materialize_deconstruct(
+            project,
+            [
+                {
+                    "type": "text",
+                    "element_id": "TEXT",
+                    "text": "Original",
+                    "box": [0, 0, 2, 1],
+                }
+            ],
+        )
+        mac_path = project / ".build" / "mac_page_specs.json"
+        forged = json.loads(mac_path.read_text(encoding="utf-8"))
+        forged["S01"]["elements"][0]["text"] = "Forged but valid"
+        mac_path.write_text(json.dumps(forged), encoding="utf-8")
+        report_path = project / ".build" / "mac_spec_report.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["normalized_sha256"] = sha256_file(mac_path)
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "MAC_V6_CONTRACT_INVALID"):
             compiler.compile_project(project)
 
     def test_bitmap_contract_rejects_unsafe_paths_and_missing_lock(self):

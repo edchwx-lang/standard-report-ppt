@@ -417,13 +417,17 @@ def add_metric_strip_mac(slide, element: dict, box: list[float]):
         add_textbox(
             slide, str(metric.get("value", "")),
             [left, y, cell_width, height * 0.58],
-            size=15, color=str(metric.get("color", NAVY)), bold=True,
+            size=15,
+            color=str(metric.get("value_color", metric.get("color", NAVY))),
+            bold=True,
             align=PP_ALIGN.CENTER,
         )
         add_textbox(
             slide, str(metric.get("label", "")),
             [left, y + height * 0.58, cell_width, height * 0.42],
-            size=8, color="#666666", align=PP_ALIGN.CENTER,
+            size=8,
+            color=str(metric.get("label_color", "#666666")),
+            align=PP_ALIGN.CENTER,
         )
 
 
@@ -474,16 +478,23 @@ def add_flow_mac(slide, element: dict, box: list[float]):
                 max(0.05, header_height - 0.04),
             ],
             size=9,
-            color=WHITE,
+            color=str(step.get("title_color", WHITE)),
             bold=True,
             align=PP_ALIGN.CENTER,
             valign=MSO_ANCHOR.MIDDLE,
             margin_left=0,
             margin_right=0,
         )
+        body = str(step.get("body", "")).strip()
+        detail = str(step.get("detail", "")).strip()
+        body_text = (
+            f"{body}\n{detail}"
+            if body and detail and body != detail
+            else body or detail
+        )
         add_textbox(
             slide,
-            str(step.get("body", step.get("detail", ""))),
+            body_text,
             [
                 left + 0.07,
                 y + header_height + 0.04,
@@ -491,7 +502,7 @@ def add_flow_mac(slide, element: dict, box: list[float]):
                 max(0.05, height - header_height - 0.08),
             ],
             size=8,
-            color=BLACK,
+            color=str(step.get("body_color", BLACK)),
             align=PP_ALIGN.LEFT,
             valign=MSO_ANCHOR.TOP,
             margin_left=0,
@@ -543,7 +554,7 @@ def add_category_chart(slide, kind: str, element: dict, box: list[float]):
     )
     chart = frame.chart
     chart.has_title = False
-    chart.chart_style = 10
+    chart.chart_style = int(element.get("style", 10))
     chart.has_legend = bool(element.get("show_legend", len(chart.series) > 1))
     if chart.has_legend:
         chart.legend.position = XL_LEGEND_POSITION.BOTTOM
@@ -717,6 +728,7 @@ def _render_page_spec_unsafe(
                     absolute,
                 )
             elif kind == "text_card":
+                header_height = min(0.34, max(0.24, height * 0.30))
                 _add_shape(
                     slide,
                     MSO_SHAPE.RECTANGLE,
@@ -724,30 +736,38 @@ def _render_page_spec_unsafe(
                     fill=str(element.get("body_fill", WHITE)),
                     line=LIGHT_GRAY,
                 )
+                _add_shape(
+                    slide,
+                    MSO_SHAPE.RECTANGLE,
+                    [x, y, width, header_height],
+                    fill=str(element.get("title_fill", element.get("body_fill", WHITE))),
+                    line=None,
+                )
                 add_textbox(
                     slide,
                     str(element.get("title", "")),
                     [
                         x + 0.08,
-                        y + 0.05,
+                        y + 0.03,
                         width - 0.16,
-                        min(0.28, height * 0.30),
+                        max(0.05, header_height - 0.06),
                     ],
                     size=10,
-                    color=NAVY,
+                    color=str(element.get("title_color", NAVY)),
                     bold=True,
+                    valign=MSO_ANCHOR.MIDDLE,
                 )
                 add_textbox(
                     slide,
                     str(element.get("body", "")),
                     [
                         x + 0.08,
-                        y + min(0.34, height * 0.35),
+                        y + header_height + 0.04,
                         width - 0.16,
-                        max(0.05, height - 0.39),
+                        max(0.05, height - header_height - 0.08),
                     ],
                     size=9,
-                    color=BLACK,
+                    color=str(element.get("body_color", BLACK)),
                 )
             elif kind == "metric_strip":
                 add_metric_strip_mac(slide, element, absolute)

@@ -121,14 +121,59 @@ def _contract_hashes(project: Path, mode: str) -> dict[str, str]:
     return hashes
 
 
+def _validate_mac_spec_derivation(
+    project: Path,
+    mode: str,
+    page_specs: dict[str, Any],
+    normalizer: Any,
+) -> None:
+    if mode == "deconstruct":
+        source_relative = ".build/page_specs.json"
+        source_specs = _required_json(project, source_relative)
+        rederived, _ = normalizer.normalize_mac_page_specs(
+            source_specs, "deconstruct"
+        )
+        if rederived != page_specs:
+            raise ValueError(
+                f"{ERROR_CONTRACT}: mac_page_specs do not derive from page_specs"
+            )
+        report = _required_json(project, ".build/mac_spec_report.json")
+        expected_report = {
+            "schema_version": SCHEMA_VERSION,
+            "pipeline_revision": PIPELINE_REVISION,
+            "construction_mode": "deconstruct",
+            "builder_backend": BUILDER_BACKEND,
+            "status": "pass",
+            "ok": True,
+            "source_path": source_relative,
+            "source_sha256": sha256_file(project / source_relative),
+            "normalized_path": ".build/mac_page_specs.json",
+            "normalized_sha256": sha256_file(
+                project / ".build/mac_page_specs.json"
+            ),
+        }
+        if any(report.get(key) != value for key, value in expected_report.items()):
+            raise ValueError(f"{ERROR_CONTRACT}: stale mac spec report")
+        return
+
+    normalized, _ = normalizer.normalize_mac_page_specs(page_specs, "bitmap")
+    if normalized != page_specs:
+        raise ValueError(
+            f"{ERROR_CONTRACT}: bitmap_page_specs are not normalized"
+        )
+
+
 def _blueprint_hashes(
     project: Path,
     expected: list[str],
     formal_manifest: dict[str, Any],
     visual_manifest: dict[str, Any] | None,
+    mode: str,
 ) -> dict[str, dict[str, str]]:
     if (
         formal_manifest.get("schema_version") != SCHEMA_VERSION
+        or formal_manifest.get("pipeline_revision") != PIPELINE_REVISION
+        or formal_manifest.get("construction_mode") != mode
         or not isinstance(formal_manifest.get("pages"), dict)
         or set(formal_manifest["pages"]) != set(expected)
     ):
@@ -149,35 +194,51 @@ def _blueprint_hashes(
         locked = formal_manifest["pages"].get(slide_id)
         if not isinstance(locked, dict):
             raise ValueError(f"{ERROR_CONTRACT}: {slide_id} blueprint lock")
-        expected_path = f"blueprints/{slide_id}.png"
-        path = _canonical_project_path(
+        expected_draft_path = f".build/design_drafts/{slide_id}.png"
+        expected_formal_path = f"blueprints/{slide_id}.png"
+        draft_path = _canonical_project_path(
             project,
-            locked.get("formal_blueprint_path"),
-            expected_path,
+            locked.get("design_draft_path"),
+            expected_draft_path,
             error_code=ERROR_BLUEPRINT,
         )
-        locked_hash = locked.get("formal_blueprint_sha256")
+        formal_path = _canonical_project_path(
+            project,
+            locked.get("formal_blueprint_path"),
+            expected_formal_path,
+            error_code=ERROR_BLUEPRINT,
+        )
+        draft_hash = locked.get("design_draft_sha256")
+        formal_hash = locked.get("formal_blueprint_sha256")
         if (
-            not isinstance(locked_hash, str)
-            or len(locked_hash) != 64
-            or not path.is_file()
-            or sha256_file(path) != locked_hash
+            not isinstance(draft_hash, str)
+            or len(draft_hash) != 64
+            or not isinstance(formal_hash, str)
+            or len(formal_hash) != 64
+            or draft_hash != formal_hash
+            or not draft_path.is_file()
+            or not formal_path.is_file()
+            or sha256_file(draft_path) != draft_hash
+            or sha256_file(formal_path) != formal_hash
         ):
             raise ValueError(f"{ERROR_BLUEPRINT}: {slide_id}")
         if visual_pages is not None:
             visual = visual_pages.get(slide_id)
             if (
                 not isinstance(visual, dict)
-                or visual.get("formal_blueprint_path") != expected_path
-                or visual.get("formal_blueprint_sha256") != locked_hash
-                or visual.get("design_draft_sha256") != locked_hash
+                or visual.get("design_draft_path") != expected_draft_path
+                or visual.get("formal_blueprint_path") != expected_formal_path
+                or visual.get("design_draft_sha256") != draft_hash
+                or visual.get("formal_blueprint_sha256") != formal_hash
             ):
                 raise ValueError(
                     f"{ERROR_BLUEPRINT}: {slide_id} visual lock mismatch"
                 )
         records[slide_id] = {
-            "path": expected_path,
-            "sha256": locked_hash,
+            "path": expected_formal_path,
+            "sha256": formal_hash,
+            "design_draft_path": expected_draft_path,
+            "design_draft_sha256": draft_hash,
         }
     return records
 
@@ -320,6 +381,7 @@ def compile_project(project_dir: str | Path) -> Path:
         raise ValueError(
             "MAC_RECONSTRUCTION_UNSUPPORTED: compiler input is not normalized"
         )
+    _validate_mac_spec_derivation(project, mode, page_specs, normalizer)
 
     formal_manifest = _required_json(
         project, ".build/formal_blueprint_manifest.json"
@@ -348,6 +410,7 @@ def compile_project(project_dir: str | Path) -> Path:
         expected,
         formal_manifest,
         manifest,
+        mode,
     )
     if mode == "deconstruct":
         assert isinstance(manifest, dict)
