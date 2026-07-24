@@ -1892,22 +1892,12 @@ def _v6_repair_contract_snapshot(
         if construction_mode == "deconstruct"
         else ".build/bitmap_alignment.json"
     )
-    contract_paths = {
-        "project_brief.json",
-        "generate_deck.py",
-        ".build/authoring_bundle.json",
-        ".build/bitmap_alignment.json",
-        ".build/bitmap_contract.json",
-        ".build/bitmap_page_specs.json",
-        ".build/bitmap_review.json",
-        ".build/blueprint_alignment.json",
-        ".build/deconstruction_precheck.json",
-        ".build/formal_blueprint_manifest.json",
-        ".build/page_specs.json",
-        ".build/slides.json",
-        ".build/visual_manifest.json",
-        ".build/visual_review_tiles.json",
-    }
+    contract_paths = {"project_brief.json", "generate_deck.py"}
+    contract_paths.update(
+        path.relative_to(project).as_posix()
+        for path in (project / ".build").rglob("*.json")
+        if path.name != "v6_build_attempt.json"
+    )
     contract_paths.discard(mutable_alignment)
     for pattern in ("blueprints/S[0-9][0-9].png", ".build/design_drafts/S[0-9][0-9].png"):
         contract_paths.update(
@@ -1964,6 +1954,11 @@ def _run_v6_project(
             )
         if previous.get("construction_mode") != brief.get("construction_mode"):
             raise ValueError("V6 repair cannot change construction mode")
+        _assert_v6_repair_contract_unchanged(
+            project_dir,
+            str(brief["construction_mode"]),
+            previous.get("repair_contract_snapshot"),
+        )
         attempt_count = 2
     else:
         if previous_count:
@@ -1979,11 +1974,6 @@ def _run_v6_project(
     if catastrophic_repair:
         if previous.get("builder_backend") != backend:
             raise ValueError("V6 repair cannot change builder backend")
-        _assert_v6_repair_contract_unchanged(
-            project_dir,
-            mode,
-            previous.get("repair_contract_snapshot"),
-        )
     suffix = "解构版" if mode == "deconstruct" else "位图版"
     output = (
         Path(output_path)

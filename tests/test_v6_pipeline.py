@@ -318,6 +318,24 @@ class V6PipelineTests(unittest.TestCase):
                     project, brief("deconstruct"), alignment
                 )
 
+    def test_v6_deconstruct_review_rejects_duplicate_review_indexes(self):
+        mutations = (
+            lambda page: page["visual_review_tiles"]["reviewed_tile_ids"].append("Q4"),
+            lambda page: page["visual_review_tiles"]["tile_subjects"]["Q1"].append(
+                "V01"
+            ),
+            lambda page: page["visuals"][0]["review_tile_ids"].append("Q1"),
+        )
+        for mutate in mutations:
+            with self.subTest(mutation=mutate), tempfile.TemporaryDirectory() as directory:
+                project = Path(directory)
+                alignment, _ = self.make_reviewed_deconstruct_alignment(project)
+                mutate(alignment["pages"]["S01"])
+                with self.assertRaisesRegex(ValueError, "visual review failed"):
+                    PIPELINE._validate_v6_deconstruct_alignment(
+                        project, brief("deconstruct"), alignment
+                    )
+
     def test_prebuild_accepts_the_exact_v6_prepare_visual_review_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
@@ -724,6 +742,26 @@ class V6PipelineTests(unittest.TestCase):
                 )
             (project / ".build" / "visual_manifest.json").write_text(
                 json.dumps({"pages": {"S01": {"tampered": True}}}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "repair contract"):
+                self.run_with_fakes(project, value, repair=True)
+
+    def test_repair_locks_all_build_json_including_imagegen_transport_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            value = self.make_locked_project(project)
+            transport = project / ".build" / "imagegen_transport_report.json"
+            transport.write_text(
+                json.dumps({"status": "succeeded", "attempt_count": 1}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, "compile failed"):
+                self.run_with_fakes(
+                    project, value, compile_error=RuntimeError("compile failed")
+                )
+            transport.write_text(
+                json.dumps({"status": "pending", "attempt_count": 0}),
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(ValueError, "repair contract"):

@@ -155,6 +155,7 @@ def validate_review_tiles(
             if (
                 not isinstance(reviewed_tile_ids, list)
                 or set(reviewed_tile_ids) != {"Q1", "Q2", "Q3", "Q4"}
+                or len(reviewed_tile_ids) != 4
             ):
                 errors.append(f"{slide_id}: reviewed tile set must be Q1-Q4")
             valid_index = (
@@ -167,7 +168,7 @@ def validate_review_tiles(
                     if not isinstance(subject_ids, list) or not all(
                         isinstance(subject_id, str) and subject_id
                         for subject_id in subject_ids
-                    ):
+                    ) or len(subject_ids) != len(set(subject_ids)):
                         valid_index = False
                         break
                     indexed_ids.update(subject_ids)
@@ -205,6 +206,7 @@ def validate_review_tiles(
                     if (
                         not isinstance(memberships, list)
                         or not memberships
+                        or len(memberships) != len(set(memberships))
                         or set(memberships) != expected_memberships
                     ):
                         errors.append(
