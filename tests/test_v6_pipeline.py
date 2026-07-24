@@ -237,6 +237,10 @@ class V6PipelineTests(unittest.TestCase):
         manifest = PIPELINE.prepare_visual_review(project)
         manifest_path = project / ".build" / "visual_review_tiles.json"
         digest = PIPELINE._sha256_file(project / "blueprints" / "S01.png")
+        visual = {
+            "visual_id": "V01",
+            "review_tile_ids": ["Q1"],
+        }
         alignment = {
             "schema_version": "6.0",
             "pipeline_revision": "6.0.0",
@@ -246,9 +250,18 @@ class V6PipelineTests(unittest.TestCase):
                     "reviewed": True,
                     "design_draft_sha256": digest,
                     "resolved_page_spec": {"elements": []},
+                    "visuals": [visual],
                     "visual_review_tiles": {
+                        "full_page_reviewed": True,
                         "tile_manifest_sha256": PIPELINE._sha256_file(manifest_path),
                         "blueprint_sha256": digest,
+                        "reviewed_tile_ids": ["Q1", "Q2", "Q3", "Q4"],
+                        "tile_subjects": {
+                            "Q1": ["V01"],
+                            "Q2": [],
+                            "Q3": [],
+                            "Q4": [],
+                        },
                     },
                 }
             },
@@ -267,6 +280,43 @@ class V6PipelineTests(unittest.TestCase):
             PIPELINE._validate_v6_deconstruct_alignment(
                 project, brief("deconstruct"), alignment
             )
+
+    def test_v6_deconstruct_review_rejects_missing_review_evidence_fields(self):
+        for field in (
+            "full_page_reviewed",
+            "reviewed_tile_ids",
+            "tile_subjects",
+        ):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                project = Path(directory)
+                alignment, _ = self.make_reviewed_deconstruct_alignment(project)
+                alignment["pages"]["S01"]["visual_review_tiles"].pop(field)
+                with self.assertRaisesRegex(ValueError, "visual review failed"):
+                    PIPELINE._validate_v6_deconstruct_alignment(
+                        project, brief("deconstruct"), alignment
+                    )
+
+    def test_v6_deconstruct_review_rejects_incomplete_visual_tile_index(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            alignment, _ = self.make_reviewed_deconstruct_alignment(project)
+            alignment["pages"]["S01"]["visual_review_tiles"]["tile_subjects"][
+                "Q1"
+            ] = []
+            with self.assertRaisesRegex(ValueError, "visual review failed"):
+                PIPELINE._validate_v6_deconstruct_alignment(
+                    project, brief("deconstruct"), alignment
+                )
+
+    def test_v6_deconstruct_review_rejects_missing_visual_tile_membership(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            alignment, _ = self.make_reviewed_deconstruct_alignment(project)
+            alignment["pages"]["S01"]["visuals"][0].pop("review_tile_ids")
+            with self.assertRaisesRegex(ValueError, "visual review failed"):
+                PIPELINE._validate_v6_deconstruct_alignment(
+                    project, brief("deconstruct"), alignment
+                )
 
     def test_prebuild_accepts_the_exact_v6_prepare_visual_review_contract(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -618,6 +668,65 @@ class V6PipelineTests(unittest.TestCase):
             result = self.run_with_fakes(project, value, repair=True)
             self.assertEqual(2, result["build_attempt"])
             with self.assertRaisesRegex(ValueError, "requires one catastrophic"):
+                self.run_with_fakes(project, value, repair=True)
+
+    def test_catastrophic_repair_cannot_switch_construction_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            value = self.make_locked_project(project)
+            with self.assertRaisesRegex(RuntimeError, "compile failed"):
+                self.run_with_fakes(
+                    project, value, compile_error=RuntimeError("compile failed")
+                )
+            switched = dict(value)
+            switched["construction_mode"] = "bitmap"
+            with self.assertRaisesRegex(ValueError, "construction mode"):
+                self.run_with_fakes(project, switched, repair=True)
+
+    def test_catastrophic_repair_cannot_switch_builder_backend(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            value = self.make_locked_project(project)
+            with self.assertRaisesRegex(RuntimeError, "compile failed"):
+                self.run_with_fakes(
+                    project, value, compile_error=RuntimeError("compile failed")
+                )
+            with self.assertRaisesRegex(ValueError, "builder backend"):
+                self.run_with_fakes(
+                    project,
+                    value,
+                    backend="mac_python_pptx_v2",
+                    repair=True,
+                )
+
+    def test_bitmap_repair_rejects_changes_outside_bitmap_alignment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            value = self.make_locked_project(project, mode="bitmap")
+            with self.assertRaisesRegex(RuntimeError, "compile failed"):
+                self.run_with_fakes(
+                    project, value, compile_error=RuntimeError("compile failed")
+                )
+            (project / ".build" / "slides.json").write_text(
+                json.dumps([{"slide_id": "S01", "title": "tampered"}]),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "repair contract"):
+                self.run_with_fakes(project, value, repair=True)
+
+    def test_deconstruct_repair_rejects_changes_outside_blueprint_alignment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            value = self.make_locked_project(project)
+            with self.assertRaisesRegex(RuntimeError, "compile failed"):
+                self.run_with_fakes(
+                    project, value, compile_error=RuntimeError("compile failed")
+                )
+            (project / ".build" / "visual_manifest.json").write_text(
+                json.dumps({"pages": {"S01": {"tampered": True}}}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "repair contract"):
                 self.run_with_fakes(project, value, repair=True)
 
     def test_second_catastrophic_failure_stops(self):

@@ -171,18 +171,18 @@ git -C "$HOME/.codex/skills/standard-report-ppt" pull
 ### 使用方式
 
 ```text
-$standard-report-ppt 用这份报告做3页PPT，蓝图模式
-$standard-report-ppt 用这份报告做5页PPT，快速模式
+$standard-report-ppt 用这份报告做3页PPT，解构模式
+$standard-report-ppt 用这份报告做5页PPT，位图模式
 ```
 
 也可以先提供材料，再按提示选择：
 
 ```text
-1. ImageGen 蓝图还原
-2. 快速生成
+1. 解构模式（较慢）：逐页拆解蓝图并重建为可编辑 PPT；复杂非原生视觉可保留为局部位图。
+2. 位图模式（较快）：章节、标题、核心判断、来源和页码可编辑；主体蓝图裁切后作为不可编辑图片放入。
 ```
 
-最终页数和生产模式是仅有的常规用户确认。完整合同、视觉规则和兼容行为见 [SKILL.md](SKILL.md)。
+最终页数和生产方式是仅有的常规用户确认。V6 两种方式都必须先完成内容解析和 ImageGen 蓝图锁定；单独选择“蓝图模式”无效。完整合同、视觉规则和兼容行为见 [SKILL.md](SKILL.md)。
 
 ### 项目管线命令
 

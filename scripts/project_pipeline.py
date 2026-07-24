@@ -1883,6 +1883,63 @@ def _mark_v6_whole_deck_built(project: Path) -> None:
     _write_json_atomic(path, payload)
 
 
+def _v6_repair_contract_snapshot(
+    project: Path,
+    construction_mode: str,
+) -> dict[str, str | None]:
+    mutable_alignment = (
+        ".build/blueprint_alignment.json"
+        if construction_mode == "deconstruct"
+        else ".build/bitmap_alignment.json"
+    )
+    contract_paths = {
+        "project_brief.json",
+        "generate_deck.py",
+        ".build/authoring_bundle.json",
+        ".build/bitmap_alignment.json",
+        ".build/bitmap_contract.json",
+        ".build/bitmap_page_specs.json",
+        ".build/bitmap_review.json",
+        ".build/blueprint_alignment.json",
+        ".build/deconstruction_precheck.json",
+        ".build/formal_blueprint_manifest.json",
+        ".build/page_specs.json",
+        ".build/slides.json",
+        ".build/visual_manifest.json",
+        ".build/visual_review_tiles.json",
+    }
+    contract_paths.discard(mutable_alignment)
+    for pattern in ("blueprints/S[0-9][0-9].png", ".build/design_drafts/S[0-9][0-9].png"):
+        contract_paths.update(
+            path.relative_to(project).as_posix() for path in project.glob(pattern)
+        )
+    snapshot: dict[str, str | None] = {}
+    for relative in sorted(contract_paths):
+        path = project / relative
+        snapshot[relative] = _sha256_file(path) if path.is_file() else None
+    return snapshot
+
+
+def _assert_v6_repair_contract_unchanged(
+    project: Path,
+    construction_mode: str,
+    expected: Any,
+) -> None:
+    if not isinstance(expected, dict):
+        raise ValueError("V6 repair contract snapshot is missing")
+    actual = _v6_repair_contract_snapshot(project, construction_mode)
+    changed = sorted(
+        relative
+        for relative in set(expected) | set(actual)
+        if expected.get(relative) != actual.get(relative)
+    )
+    if changed:
+        raise ValueError(
+            "V6 repair contract changed outside the permitted alignment file: "
+            + ", ".join(changed)
+        )
+
+
 def _run_v6_project(
     project_dir: Path,
     brief: dict[str, Any],
@@ -1905,6 +1962,8 @@ def _run_v6_project(
             raise ValueError(
                 "V6 repair requires one catastrophic first-attempt failure"
             )
+        if previous.get("construction_mode") != brief.get("construction_mode"):
+            raise ValueError("V6 repair cannot change construction mode")
         attempt_count = 2
     else:
         if previous_count:
@@ -1917,6 +1976,14 @@ def _run_v6_project(
     )
     backend = str(runtime["builder_backend"])
     mode = str(brief["construction_mode"])
+    if catastrophic_repair:
+        if previous.get("builder_backend") != backend:
+            raise ValueError("V6 repair cannot change builder backend")
+        _assert_v6_repair_contract_unchanged(
+            project_dir,
+            mode,
+            previous.get("repair_contract_snapshot"),
+        )
     suffix = "解构版" if mode == "deconstruct" else "位图版"
     output = (
         Path(output_path)
@@ -1945,6 +2012,9 @@ def _run_v6_project(
                     "status": "catastrophic_failed",
                     "failed_stage": stage_name,
                     "error": str(exc),
+                    "repair_contract_snapshot": _v6_repair_contract_snapshot(
+                        project_dir, mode
+                    ),
                 }
             )
             _write_json_atomic(attempt_path, failed)
