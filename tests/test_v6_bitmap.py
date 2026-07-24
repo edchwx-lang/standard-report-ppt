@@ -34,11 +34,12 @@ class V6BitmapTests(unittest.TestCase):
         return {
             "schema_version": "6.0",
             "pipeline_revision": "6.0.0",
+            "construction_mode": "bitmap",
             "pages": {
                 slide_id: {
                     "reviewed_full_page": True,
                     "blueprint_sha256": review["pages"][slide_id]["blueprint_sha256"],
-                    "body_crop_px": [10, 20, 190, 90],
+                    "source_px": [10, 20, 190, 90],
                     "excluded_skeleton_regions": list(
                         self.bitmap.EXCLUDED_SKELETON_REGIONS
                     ),
@@ -72,6 +73,37 @@ class V6BitmapTests(unittest.TestCase):
             self.assertIn(self.bitmap.ERROR_REVIEW_REQUIRED, errors)
             self.assertIn(self.bitmap.ERROR_EXCLUDED_REGIONS, errors)
 
+    def test_alignment_requires_exact_v6_bitmap_metadata_and_source_px_field(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            self.write_blueprint(project)
+            review = self.bitmap.prepare_bitmap_review(project)
+            payload = self.alignment(review)
+            self.assertEqual([], self.bitmap.validate_bitmap_alignment(project, payload))
+            payload["schema_version"] = "6"
+            payload["pipeline_revision"] = "6.0"
+            payload["construction_mode"] = "Bitmap"
+            payload["pages"]["S01"]["body_crop_px"] = payload["pages"]["S01"].pop(
+                "source_px"
+            )
+            errors = self.bitmap.validate_bitmap_alignment(project, payload)
+            self.assertIn(self.bitmap.ERROR_ALIGNMENT_SCHEMA_VERSION, errors)
+            self.assertIn(self.bitmap.ERROR_ALIGNMENT_PIPELINE_REVISION, errors)
+            self.assertIn(self.bitmap.ERROR_ALIGNMENT_CONSTRUCTION_MODE, errors)
+            self.assertIn(self.bitmap.ERROR_CROP_BOUNDS, errors)
+
+    def test_alignment_rejects_wrong_case_excluded_region_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            self.write_blueprint(project)
+            review = self.bitmap.prepare_bitmap_review(project)
+            payload = self.alignment(review)
+            payload["pages"]["S01"]["excluded_skeleton_regions"][0] = "Chapter"
+            self.assertIn(
+                self.bitmap.ERROR_EXCLUDED_REGIONS,
+                self.bitmap.validate_bitmap_alignment(project, payload),
+            )
+
     def test_alignment_rejects_stale_hash_and_invalid_crop_geometry(self):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
@@ -79,7 +111,7 @@ class V6BitmapTests(unittest.TestCase):
             review = self.bitmap.prepare_bitmap_review(project)
             payload = self.alignment(review)
             payload["pages"]["S01"]["blueprint_sha256"] = "0" * 64
-            payload["pages"]["S01"]["body_crop_px"] = [0, 0, 200, 100]
+            payload["pages"]["S01"]["source_px"] = [0, 0, 200, 100]
             errors = self.bitmap.validate_bitmap_alignment(project, payload)
             self.assertIn(self.bitmap.ERROR_BLUEPRINT_HASH, errors)
             self.assertIn(self.bitmap.ERROR_FULL_IMAGE_CROP, errors)
@@ -99,6 +131,7 @@ class V6BitmapTests(unittest.TestCase):
             self.assertEqual([10, 20, 190, 90], page["source_px"])
             self.assertEqual("contain", page["fit"])
             self.assertEqual("runtime_body_box", page["target"])
+            self.assertEqual("bitmap", contract["construction_mode"])
             with Image.open(asset) as image:
                 self.assertEqual((180, 70), image.size)
             specs = json.loads(
@@ -111,7 +144,7 @@ class V6BitmapTests(unittest.TestCase):
             self.assertEqual("body_asset", elements[0]["type"])
             self.assertNotIn("box", elements[0])
 
-    def test_materialize_refuses_missing_or_stale_review_records(self):
+    def test_materialize_refuses_missing_review_record(self):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
             self.write_blueprint(project)
@@ -122,6 +155,19 @@ class V6BitmapTests(unittest.TestCase):
             )
             (project / ".build" / "bitmap_review.json").unlink()
             with self.assertRaisesRegex(ValueError, self.bitmap.ERROR_REVIEW_RECORD):
+                self.bitmap.materialize_bitmap_assets(project)
+
+    def test_materialize_refuses_a_review_stale_after_the_locked_blueprint_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            blueprint = self.write_blueprint(project)
+            review = self.bitmap.prepare_bitmap_review(project)
+            alignment = self.alignment(review)
+            (project / ".build" / "bitmap_alignment.json").write_text(
+                json.dumps(alignment), encoding="utf-8"
+            )
+            Image.new("RGB", (200, 100), "red").save(blueprint)
+            with self.assertRaisesRegex(ValueError, self.bitmap.ERROR_REVIEW_STALE):
                 self.bitmap.materialize_bitmap_assets(project)
 
 

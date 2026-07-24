@@ -15,15 +15,18 @@ ALIGNMENT_PATH = ".build/bitmap_alignment.json"
 CONTRACT_PATH = ".build/bitmap_contract.json"
 PAGE_SPECS_PATH = ".build/bitmap_page_specs.json"
 EXCLUDED_SKELETON_REGIONS = (
-    "SKEL_CHAPTER",
-    "SKEL_TITLE",
-    "SKEL_CORE",
-    "SKEL_SOURCE",
-    "SKEL_PAGE_NUMBER",
+    "chapter",
+    "page_title",
+    "core_judgment",
+    "source",
+    "page_number",
 )
 
 ERROR_REVIEW_RECORD = "V6_BITMAP_REVIEW_RECORD_MISSING"
 ERROR_REVIEW_STALE = "V6_BITMAP_REVIEW_RECORD_STALE"
+ERROR_ALIGNMENT_SCHEMA_VERSION = "V6_BITMAP_ALIGNMENT_SCHEMA_VERSION_INVALID"
+ERROR_ALIGNMENT_PIPELINE_REVISION = "V6_BITMAP_ALIGNMENT_PIPELINE_REVISION_INVALID"
+ERROR_ALIGNMENT_CONSTRUCTION_MODE = "V6_BITMAP_ALIGNMENT_CONSTRUCTION_MODE_INVALID"
 ERROR_ALIGNMENT_PAGES = "V6_BITMAP_ALIGNMENT_PAGES_INVALID"
 ERROR_ALIGNMENT_PAGE_SET = "V6_BITMAP_ALIGNMENT_PAGE_SET_INVALID"
 ERROR_REVIEW_REQUIRED = "V6_BITMAP_FULL_PAGE_REVIEW_REQUIRED"
@@ -76,6 +79,7 @@ def prepare_bitmap_review(project_dir: str | Path) -> dict[str, Any]:
     payload = {
         "schema_version": SCHEMA_VERSION,
         "pipeline_revision": PIPELINE_REVISION,
+        "construction_mode": "bitmap",
         "review_scope": "full_page_only",
         "pages": pages,
     }
@@ -102,6 +106,7 @@ def _review_errors(project: Path, review: dict[str, Any]) -> tuple[dict[str, Any
     if (
         review.get("schema_version") != SCHEMA_VERSION
         or review.get("pipeline_revision") != PIPELINE_REVISION
+        or review.get("construction_mode") != "bitmap"
         or review.get("review_scope") != "full_page_only"
         or not isinstance(pages, dict)
     ):
@@ -165,9 +170,24 @@ def validate_bitmap_alignment(
 ) -> list[str]:
     """Validate that bitmap alignment is reviewed and bound to current pages."""
     project = Path(project_dir).resolve()
-    review, errors = _read_review(project)
+    errors: list[str] = []
+    if not isinstance(payload, dict):
+        return [
+            ERROR_ALIGNMENT_SCHEMA_VERSION,
+            ERROR_ALIGNMENT_PIPELINE_REVISION,
+            ERROR_ALIGNMENT_CONSTRUCTION_MODE,
+            ERROR_ALIGNMENT_PAGES,
+        ]
+    if payload.get("schema_version") != SCHEMA_VERSION:
+        errors.append(ERROR_ALIGNMENT_SCHEMA_VERSION)
+    if payload.get("pipeline_revision") != PIPELINE_REVISION:
+        errors.append(ERROR_ALIGNMENT_PIPELINE_REVISION)
+    if payload.get("construction_mode") != "bitmap":
+        errors.append(ERROR_ALIGNMENT_CONSTRUCTION_MODE)
+    review, review_errors = _read_review(project)
+    errors.extend(review_errors)
     if review is None:
-        return errors
+        return _dedupe(errors)
     records, review_errors = _review_errors(project, review)
     errors.extend(review_errors)
     pages = payload.get("pages") if isinstance(payload, dict) else None
@@ -185,7 +205,7 @@ def validate_bitmap_alignment(
             errors.append(ERROR_BLUEPRINT_HASH)
         width, height = review_record["pixel_size"]
         valid_crop, full_image = _valid_crop(
-            alignment.get("body_crop_px"), width, height
+            alignment.get("source_px"), width, height
         )
         if not valid_crop:
             errors.append(ERROR_CROP_BOUNDS)
@@ -229,7 +249,7 @@ def materialize_bitmap_assets(project_dir: str | Path) -> dict[str, Any]:
     page_specs: dict[str, Any] = {}
     for slide_id, review_record in records.items():
         blueprint = project / review_record["blueprint_path"]
-        source_px = alignment["pages"][slide_id]["body_crop_px"]
+        source_px = alignment["pages"][slide_id]["source_px"]
         asset_id = f"{slide_id}_BODY_BITMAP"
         asset = project / ".build" / "assets" / slide_id / f"{asset_id}.png"
         asset.parent.mkdir(parents=True, exist_ok=True)
@@ -260,6 +280,7 @@ def materialize_bitmap_assets(project_dir: str | Path) -> dict[str, Any]:
     contract = {
         "schema_version": SCHEMA_VERSION,
         "pipeline_revision": PIPELINE_REVISION,
+        "construction_mode": "bitmap",
         "pages": contract_pages,
     }
     _write_json_atomic(project / CONTRACT_PATH, contract)

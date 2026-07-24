@@ -15,24 +15,25 @@ Write one UTF-8 `.build/bitmap_alignment.json` using this exact contract:
 {
   "schema_version": "6.0",
   "pipeline_revision": "6.0.0",
+  "construction_mode": "bitmap",
   "pages": {
     "S01": {
       "reviewed_full_page": true,
       "blueprint_sha256": "<exact hash from bitmap_review.json>",
-      "body_crop_px": [left, top, right, bottom],
+      "source_px": [left, top, right, bottom],
       "excluded_skeleton_regions": [
-        "SKEL_CHAPTER",
-        "SKEL_TITLE",
-        "SKEL_CORE",
-        "SKEL_SOURCE",
-        "SKEL_PAGE_NUMBER"
+        "chapter",
+        "page_title",
+        "core_judgment",
+        "source",
+        "page_number"
       ]
     }
   }
 }
 ```
 
-`body_crop_px` uses integer source pixels and must be in bounds, non-empty,
+`source_px` uses integer source pixels and must be in bounds, non-empty,
 and smaller than the entire source image. The five excluded skeleton region
 names must appear exactly as shown and in that order. The crop becomes one
 full body bitmap fitted to the deterministic runtime body box.
