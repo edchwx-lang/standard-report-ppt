@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from PIL import Image
+from docx import Document
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +43,104 @@ def brief(mode: str | None = "deconstruct") -> dict:
 
 
 class V6PipelineTests(unittest.TestCase):
+    def test_v6_init_reuses_shared_source_ingest_with_v59_digest_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "project"
+            project.mkdir()
+            source = root / "source.docx"
+            document = Document()
+            document.add_paragraph("全球顶尖科学家迁移趋势")
+            document.save(source)
+            value = brief("bitmap")
+            value["source_files"] = [str(source)]
+            (project / "project_brief.json").write_text(
+                json.dumps(value, ensure_ascii=False), encoding="utf-8"
+            )
+
+            with mock.patch.object(
+                PIPELINE,
+                "_ensure_project_runtime",
+                return_value={"ok": True, "backend": "windows_com_v584"},
+            ):
+                result = PIPELINE.init_project(project)
+
+            self.assertEqual("6.0", result["schema_version"])
+            digest = json.loads(
+                (project / ".build" / "source_digest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            extract = json.loads(
+                (project / ".build" / "source_extract.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual("5.9", digest["schema_version"])
+            self.assertEqual("6.0", extract["schema_version"])
+            self.assertEqual(
+                "6.0",
+                json.loads(
+                    (project / "project_brief.json").read_text(encoding="utf-8")
+                )["schema_version"],
+            )
+
+    def test_v6_materialize_reuses_v59_text_benchmark_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            build = project / ".build"
+            drafts = build / "design_drafts"
+            drafts.mkdir(parents=True)
+            Image.new("RGB", (1600, 900), "white").save(drafts / "S01.png")
+            (project / "project_brief.json").write_text(
+                json.dumps(brief("bitmap"), ensure_ascii=False), encoding="utf-8"
+            )
+            bundle = {
+                "schema_version": "6.0",
+                "slides": [
+                    {
+                        "slide_id": "S01",
+                        "chapter": "第一章",
+                        "title": "V6共享文本基准",
+                        "core_points": ["共享算法保持不变"],
+                        "source": "资料来源：测试",
+                        "visual_route": {
+                            "data_kind": "qualitative",
+                            "qualitative_form": "parallel",
+                        },
+                        "evidence_inventory": [],
+                    }
+                ],
+                "page_specs": {"S01": {"elements": []}},
+                "visual_manifest": {
+                    "schema_version": "6.0",
+                    "pages": {
+                        "S01": {
+                            "design_draft_path": ".build/design_drafts/S01.png"
+                        }
+                    },
+                },
+            }
+            (build / "authoring_bundle.json").write_text(
+                json.dumps(bundle, ensure_ascii=False), encoding="utf-8"
+            )
+
+            result = PIPELINE.materialize_project(project)
+
+            benchmark = json.loads(
+                (build / "blueprint_text_benchmark.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            manifest = json.loads(
+                (build / "visual_manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual("6.0", result["schema_version"])
+            self.assertEqual("6.0", benchmark["schema_version"])
+            self.assertEqual("6.0.0", manifest["pipeline_revision"])
+            self.assertEqual("bitmap", manifest["construction_mode"])
+            self.assertEqual("v583_authoring", result["shared_pre_blueprint_algorithm"])
+
     def make_locked_project(
         self, project: Path, mode: str = "deconstruct", page_count: int = 1
     ) -> dict:

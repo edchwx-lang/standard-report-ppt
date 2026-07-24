@@ -28,6 +28,43 @@ def _load_module(name: str, path: Path):
     return module
 
 
+def _ingest_project_sources(project_dir: Path, brief: dict, ingest: Any) -> dict:
+    if brief.get("schema_version") != "6.0":
+        return ingest.ingest_project_sources(project_dir)
+
+    original_loader = ingest._load_module
+
+    def v6_compatible_loader(name: str, path: Path):
+        module = original_loader(name, path)
+        if Path(path).name != "v58_source_cache.py":
+            return module
+        original_write = module.write_source_digest
+
+        def write_source_digest(
+            cache_project_dir,
+            sources,
+            parsed_payload,
+            *,
+            schema_version: str = "5.8",
+        ):
+            cache_schema = "5.9" if schema_version == "6.0" else schema_version
+            return original_write(
+                cache_project_dir,
+                sources,
+                parsed_payload,
+                schema_version=cache_schema,
+            )
+
+        module.write_source_digest = write_source_digest
+        return module
+
+    ingest._load_module = v6_compatible_loader
+    try:
+        return ingest.ingest_project_sources(project_dir)
+    finally:
+        ingest._load_module = original_loader
+
+
 def _audit_policy(brief: dict, audit_name: str) -> str:
     policy = _load_module(
         "standard_report_v591_contracts",
@@ -620,7 +657,7 @@ def init_project(project_dir: str | Path) -> dict:
         )
         start = time.time()
         try:
-            ingest_result = ingest.ingest_project_sources(project_dir)
+            ingest_result = _ingest_project_sources(project_dir, brief, ingest)
         except Exception as exc:
             timing.record_stage(
                 project_dir,
@@ -671,7 +708,13 @@ def materialize_project(project_dir: str | Path) -> dict:
         slides, page_specs, manifest = authoring._validate_bundle(
             compatibility_bundle
         )
-        manifest["schema_version"] = "6.0"
+        manifest.update(
+            {
+                "schema_version": "6.0",
+                "pipeline_revision": "6.0.0",
+                "construction_mode": brief["construction_mode"],
+            }
+        )
         slide_ids = [str(slide["slide_id"]) for slide in slides]
         draft_hashes = authoring._bind_design_drafts(
             project_dir, manifest, slide_ids
@@ -681,8 +724,9 @@ def materialize_project(project_dir: str | Path) -> dict:
             Path(__file__).with_name("v58_text_benchmark.py"),
         )
         benchmark = benchmark_module.make_benchmark(
-            slides, page_specs, draft_hashes, schema_version="6.0"
+            slides, page_specs, draft_hashes, schema_version="5.9"
         )
+        benchmark["schema_version"] = "6.0"
         _write_json_atomic(build / "slides.json", slides)
         _write_json_atomic(build / "page_specs.json", page_specs)
         _write_json_atomic(build / "visual_manifest.json", manifest)
