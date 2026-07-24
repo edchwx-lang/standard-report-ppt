@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
+from PIL import Image
+
 
 SCHEMA_VERSION = "6.0"
 DECONSTRUCTION_EDITABILITY_FAILED = "DECONSTRUCTION_EDITABILITY_FAILED"
@@ -80,13 +82,12 @@ def _skeleton_errors(slide, code: str, slide_id: str) -> list[dict[str, Any]]:
     return errors
 
 
-def audit_deconstruction_pptx(pptx_path: str | Path, page_specs: dict[str, Any], alignment: dict[str, Any], allowed_large_visual_asset_ids: list[str] | dict[str, list[str]] | None = None) -> dict[str, Any]:
+def audit_deconstruction_pptx(pptx_path: str | Path, page_specs: dict[str, Any], alignment: dict[str, Any], allowed_large_visual_assets_by_page: dict[str, list[str]] | None = None) -> dict[str, Any]:
     from pptx import Presentation
 
     presentation = Presentation(str(pptx_path)); specs = _pages(page_specs); aligned = _pages(alignment)
     xml = _xml_text(pptx_path); blockers = []
-    allowed_by_page = allowed_large_visual_asset_ids if isinstance(allowed_large_visual_asset_ids, dict) else {}
-    legacy_allowed = set(allowed_large_visual_asset_ids or []) if not isinstance(allowed_large_visual_asset_ids, dict) else set()
+    allowed_by_page = allowed_large_visual_assets_by_page if isinstance(allowed_large_visual_assets_by_page, dict) else {}
     for number, slide in enumerate(presentation.slides, 1):
         slide_id = f"S{number:02d}"; spec = specs.get(slide_id, {}) if isinstance(specs.get(slide_id, {}), dict) else {}; page = aligned.get(slide_id, {}) if isinstance(aligned.get(slide_id, {}), dict) else {}
         elements = [item for item in spec.get("elements", []) if isinstance(item, dict)]
@@ -117,12 +118,12 @@ def audit_deconstruction_pptx(pptx_path: str | Path, page_specs: dict[str, Any],
         for shape in slide.shapes:
             if shape.shape_type != _PICTURE or body_area <= 0 or _overlap(_box(shape), body) / body_area < .60: continue
             asset_id = next((element.get("asset_id") for element in elements if isinstance(element.get("element_id"), str) and shape.name.startswith(_prefix(element["element_id"]))), None)
-            page_allowed = set(allowed_by_page.get(slide_id, [])) if isinstance(allowed_by_page.get(slide_id, []), list) else legacy_allowed
+            page_allowed = set(allowed_by_page.get(slide_id, [])) if isinstance(allowed_by_page.get(slide_id, []), list) else set()
             if not native and asset_id not in page_allowed: blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"large body picture {shape.name} has no editable native body content"))
     ppt_slide_ids = {f"S{index:02d}" for index in range(1, len(presentation.slides) + 1)}
-    if set(specs) != ppt_slide_ids:
-        blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, "", "PPTX slide ids must exactly equal page spec ids"))
-    return {"schema_version": SCHEMA_VERSION, "status": "blocked" if blockers else "pass", "ok": not blockers, "warnings": [], "blockers": blockers, "warning_count": 0, "blocker_count": len(blockers), "page_count": len(presentation.slides), "allowed_large_visual_asset_ids": sorted(legacy_allowed), "allowed_large_visual_assets_by_page": allowed_by_page if isinstance(allowed_by_page, dict) else {}}
+    if not (ppt_slide_ids == set(specs) == set(aligned)):
+        blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, "", "PPTX slide ids must exactly equal page spec and alignment page ids"))
+    return {"schema_version": SCHEMA_VERSION, "status": "blocked" if blockers else "pass", "ok": not blockers, "warnings": [], "blockers": blockers, "warning_count": 0, "blocker_count": len(blockers), "page_count": len(presentation.slides), "allowed_large_visual_assets_by_page": allowed_by_page}
 
 
 def _sha256(path: Path) -> str:
@@ -144,6 +145,30 @@ def _project_path(project: Path, value: Any) -> Path | None:
     return candidate
 
 
+def _matches_declared_crop(blueprint: Path | None, asset: Path | None, source_px: Any) -> bool:
+    if (
+        blueprint is None
+        or asset is None
+        or not blueprint.is_file()
+        or not asset.is_file()
+        or not isinstance(source_px, list)
+        or len(source_px) != 4
+        or any(not isinstance(value, int) or isinstance(value, bool) for value in source_px)
+    ):
+        return False
+    try:
+        with Image.open(blueprint) as source:
+            left, top, right, bottom = source_px
+            if not (0 <= left < right <= source.width and 0 <= top < bottom <= source.height):
+                return False
+            expected = source.crop((left, top, right, bottom)).convert("RGBA")
+            with Image.open(asset) as actual_source:
+                actual = actual_source.convert("RGBA")
+                return actual.size == expected.size and actual.tobytes() == expected.tobytes()
+    except OSError:
+        return False
+
+
 def audit_bitmap_pptx(pptx_path: str | Path, bitmap_contract: dict[str, Any], project_dir: str | Path) -> dict[str, Any]:
     from pptx import Presentation
 
@@ -162,6 +187,8 @@ def audit_bitmap_pptx(pptx_path: str | Path, bitmap_contract: dict[str, Any], pr
             blockers.append(_issue(BITMAP_CONTRACT_INVALID, slide_id, "source blueprint hash chain is invalid"))
         if asset is None or not asset.is_file() or _sha256(asset) != record.get("asset_sha256"):
             blockers.append(_issue(BITMAP_CONTRACT_INVALID, slide_id, "bitmap asset hash chain is invalid"))
+        if not _matches_declared_crop(blueprint, asset, record.get("source_px")):
+            blockers.append(_issue(BITMAP_CONTRACT_INVALID, slide_id, "bitmap asset does not equal the declared source crop"))
         body = _body(slide); pictures = [shape for shape in slide.shapes if shape.shape_type == _PICTURE and _overlap(_box(shape), body) > .001]
         matches = [shape for shape in pictures if shape.name.startswith(expected)]
         if len(pictures) != 1 or len(matches) != 1:

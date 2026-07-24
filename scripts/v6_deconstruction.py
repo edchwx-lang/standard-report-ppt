@@ -34,10 +34,9 @@ def _body_selected_text(page: dict[str, Any], module_id: str) -> list[str]:
 def validate_deconstruction_prebuild(brief: dict[str, Any], page_specs: dict[str, Any], alignment: dict[str, Any], backend: str) -> dict[str, Any]:
     """Guard V6 deconstruction against replacing reviewed editable modules with a bitmap."""
     if not _is_v6_deconstruct(brief):
-        return {"schema_version": SCHEMA_VERSION, "status": "pass", "ok": True, "warnings": [], "blockers": [], "warning_count": 0, "blocker_count": 0, "page_count": 0, "allowed_large_visual_asset_ids": [], "allowed_large_visual_assets_by_page": {}}
+        return {"schema_version": SCHEMA_VERSION, "status": "pass", "ok": True, "warnings": [], "blockers": [], "warning_count": 0, "blocker_count": 0, "page_count": 0, "allowed_large_visual_assets_by_page": {}}
 
     blockers: list[dict[str, Any]] = []
-    allowed: set[str] = set()
     allowed_by_page: dict[str, list[str]] = {}
     specs = _pages(page_specs)
     aligned = _pages(alignment)
@@ -103,8 +102,7 @@ def validate_deconstruction_prebuild(brief: dict[str, Any], page_specs: dict[str
         asset_elements = [element for element in elements if element.get("type") in _ASSET_TYPES]
         if len(elements) == 1 and len(asset_elements) == 1 and not page_allowed:
             blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, str(slide_id), "classic skeleton plus one composite body-image page spec is forbidden"))
-        allowed.update(page_allowed)
         if page_allowed:
             allowed_by_page[str(slide_id)] = sorted(page_allowed)
 
-    return {"schema_version": SCHEMA_VERSION, "status": "blocked" if blockers else "pass", "ok": not blockers, "warnings": [], "blockers": blockers, "warning_count": 0, "blocker_count": len(blockers), "page_count": len(specs), "allowed_large_visual_asset_ids": sorted(allowed), "allowed_large_visual_assets_by_page": allowed_by_page}
+    return {"schema_version": SCHEMA_VERSION, "status": "blocked" if blockers else "pass", "ok": not blockers, "warnings": [], "blockers": blockers, "warning_count": 0, "blocker_count": len(blockers), "page_count": len(specs), "allowed_large_visual_assets_by_page": allowed_by_page}

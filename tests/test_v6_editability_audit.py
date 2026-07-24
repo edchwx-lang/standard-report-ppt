@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import copy
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -52,6 +53,7 @@ class V6EditabilityAuditTests(unittest.TestCase):
     def setUp(self):
         self.subject = load_module("v6_editability_audit", ROOT / "scripts" / "v6_editability_audit.py")
         self.bitmap = load_module("v6_bitmap", ROOT / "scripts" / "v6_bitmap.py")
+        self.prebuild = load_module("v6_deconstruction", ROOT / "scripts" / "v6_deconstruction.py")
 
     def deck(self, directory):
         ppt = Presentation(); ppt.slide_width = Inches(12.25); ppt.slide_height = Inches(7.5)
@@ -60,7 +62,9 @@ class V6EditabilityAuditTests(unittest.TestCase):
 
     def bitmap_contract(self, directory):
         project = Path(directory) / "project"; (project / "blueprints").mkdir(parents=True, exist_ok=True)
-        Image.new("RGB", (400, 200), "navy").save(project / "blueprints" / "S01.png")
+        blueprint = Image.new("RGB", (400, 200), "navy")
+        blueprint.paste("red", (0, 0, 200, 200))
+        blueprint.save(project / "blueprints" / "S01.png")
         review = self.bitmap.prepare_bitmap_review(project)
         alignment = {"schema_version": "6.0", "pipeline_revision": "6.0.0", "construction_mode": "bitmap", "pages": {"S01": {"reviewed_full_page": True, "blueprint_sha256": review["pages"]["S01"]["blueprint_sha256"], "source_px": [10, 20, 390, 190], "excluded_skeleton_regions": list(self.bitmap.EXCLUDED_SKELETON_REGIONS)}}}
         (project / ".build" / "bitmap_alignment.json").write_text(json.dumps(alignment), encoding="utf-8")
@@ -95,7 +99,10 @@ class V6EditabilityAuditTests(unittest.TestCase):
             report = self.subject.audit_deconstruction_pptx(deck, specs, reviewed())
             self.assertFalse(report["ok"])
             self.assertTrue(any("large body picture" in item["message"] for item in report["blockers"]))
-            self.assertTrue(self.subject.audit_deconstruction_pptx(deck, specs, reviewed(), {"S01": ["MAP_ASSET"]})["ok"])
+            alignment = reviewed()
+            alignment["pages"]["S01"].update({"structure_modules": [{"module_id": "map", "module_kind": "pure_visual", "contains_editable_text": False}], "visuals": [{"asset_id": "MAP_ASSET", "kind": "map"}], "reconstruction_contract": {"module_bindings": [{"module_id": "map", "element_ids": ["MAP"]}]}})
+            prebuild = self.prebuild.validate_deconstruction_prebuild({"schema_version": "6.0", "pipeline_revision": "6.0.0", "construction_mode": "deconstruct"}, specs, alignment, "windows_com_v584")
+            self.assertTrue(self.subject.audit_deconstruction_pptx(deck, specs, alignment, prebuild["allowed_large_visual_assets_by_page"])["ok"])
 
     def test_large_asset_allowlist_is_scoped_to_its_slide_and_page_set_is_exact(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -107,7 +114,15 @@ class V6EditabilityAuditTests(unittest.TestCase):
             alignment = {"pages": {"S01": reviewed()["pages"]["S01"], "S02": reviewed()["pages"]["S01"]}}
             report = self.subject.audit_deconstruction_pptx(deck, specs, alignment, {"S01": ["MAP_ASSET"]})
             self.assertFalse(report["ok"])
-            self.assertTrue(self.subject.audit_deconstruction_pptx(deck, {"S01": specs["S01"]}, {"pages": {"S01": alignment["pages"]["S01"]}}, {"S01": ["MAP_ASSET"]})["ok"] is False)
+            self.assertTrue(any(item["slide_id"] == "S02" and "large body picture" in item["message"] for item in report["blockers"]))
+
+    def test_deconstruction_page_ids_must_match_specs_and_alignment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ppt, slide, deck = self.deck(directory)
+            second = ppt.slides.add_slide(ppt.slide_layouts[6]); add_skeleton(second); ppt.save(deck)
+            report = self.subject.audit_deconstruction_pptx(deck, {"S01": {"elements": []}}, reviewed(), {})
+            self.assertFalse(report["ok"])
+            self.assertTrue(any("page spec and alignment page ids" in item["message"] for item in report["blockers"]))
 
     def test_bitmap_audit_consumes_task1_contract_and_rejects_bad_contain(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -144,6 +159,20 @@ class V6EditabilityAuditTests(unittest.TestCase):
             self.assertFalse(self.subject.audit_bitmap_pptx(deck, escaped, project)["ok"])
             extra = copy.deepcopy(contract); extra["pages"]["S02"] = copy.deepcopy(contract["pages"]["S01"])
             self.assertFalse(self.subject.audit_bitmap_pptx(deck, extra, project)["ok"])
+
+    def test_bitmap_audit_proves_asset_is_the_declared_source_crop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project, contract, asset = self.bitmap_contract(directory)
+            blueprint = project / contract["pages"]["S01"]["source_blueprint"]
+            with Image.open(blueprint) as image:
+                image.crop((0, 0, 380, 170)).save(asset)
+            contract["pages"]["S01"]["asset_sha256"] = hashlib.sha256(asset.read_bytes()).hexdigest()
+            ppt, slide, deck = self.deck(directory); add_picture(slide, asset, "EL_S01_BODY_BITMAP_1", .56, 1.1725, 11.13, 4.98); ppt.save(deck)
+            report = self.subject.audit_bitmap_pptx(deck, contract, project)
+            self.assertFalse(report["ok"])
+            self.assertTrue(any("declared source crop" in item["message"] for item in report["blockers"]))
+            invalid = copy.deepcopy(contract); invalid["pages"]["S01"]["source_px"] = [-1, 0, 380, 170]
+            self.assertFalse(self.subject.audit_bitmap_pptx(deck, invalid, project)["ok"])
 
 
 if __name__ == "__main__":

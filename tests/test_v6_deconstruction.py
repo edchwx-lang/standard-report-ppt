@@ -59,11 +59,14 @@ class V6DeconstructionTests(unittest.TestCase):
         )
         report = self.subject.validate_deconstruction_prebuild(brief(), specs, reviewed, "mac_python_pptx_v2")
         self.assertTrue(report["ok"])
-        self.assertEqual(["MAP_ASSET"], report["allowed_large_visual_asset_ids"])
+        self.assertEqual({"S01": ["MAP_ASSET"]}, report["allowed_large_visual_assets_by_page"])
+        self.assertNotIn("allowed_large_visual_asset_ids", report)
         reviewed["pages"]["S01"]["text_decisions"].append({"module_id": "map", "role": "body", "selected": "Map label"})
         self.assertFalse(self.subject.validate_deconstruction_prebuild(brief(), specs, reviewed, "mac_python_pptx_v2")["ok"])
 
     def test_asset_only_chart_and_missing_module_semantics_are_blocked(self):
+        # module_kind/contains_editable_text are emitted by the V6 post-blueprint
+        # deconstruction prompt; no frozen pre-blueprint contract is changed.
         specs = {"S01": {"elements": [{"element_id": "CHART_IMAGE", "asset_id": "A", "type": "asset"}]}}
         chart = alignment([{"module_id": "chart", "element_ids": ["CHART_IMAGE"]}], visuals=[{"asset_id": "A", "kind": "map"}], modules=[{"module_id": "chart", "module_kind": "chart", "contains_editable_text": False}])
         self.assertFalse(self.subject.validate_deconstruction_prebuild(brief(), specs, chart, "windows_com_v584")["ok"])
