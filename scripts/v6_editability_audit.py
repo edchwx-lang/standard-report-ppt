@@ -168,6 +168,20 @@ def audit_deconstruction_pptx(
                 node = any(shape.shape_type == _AUTO_SHAPE for shape in matches)
                 connector = any(shape.shape_type == _LINE for shape in matches)
                 if not node or not connector: blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"{element_id} requires native AutoShape node and connector"))
+            if kind == "asset" and builder_backend == "windows_com_v584":
+                pictures = [
+                    shape for shape in matches if shape.shape_type == _PICTURE
+                ]
+                if any(
+                    not _picture_outline_is_none(shape) for shape in pictures
+                ):
+                    blockers.append(
+                        _issue(
+                            DECONSTRUCTION_EDITABILITY_FAILED,
+                            slide_id,
+                            f"{element_id} picture outline must be none",
+                        )
+                    )
         for selected in _selected(page):
             if selected not in xml.get(slide_id, ""): blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"selected text absent from OOXML: {selected!r}"))
         body = _body(slide); body_area = body[2] * body[3]

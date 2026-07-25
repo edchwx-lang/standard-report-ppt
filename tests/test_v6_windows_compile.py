@@ -204,6 +204,30 @@ class V6WindowsCompileTests(unittest.TestCase):
                 source.crop((0, 0, 100, 100)).save(asset)
             generator = COMPILER.compile_project(project)
             self.assertTrue(generator.is_file())
+            spec = importlib.util.spec_from_file_location(
+                "compiled_v6_windows_deconstruct_asset",
+                generator,
+            )
+            compiled = importlib.util.module_from_spec(spec)
+            assert spec.loader is not None
+            spec.loader.exec_module(compiled)
+            shape = SimpleNamespace(
+                Line=SimpleNamespace(Visible=-1),
+                Name="",
+            )
+            shapes = SimpleNamespace(AddPicture=lambda *args: shape)
+            slide = SimpleNamespace(Shapes=shapes)
+            compiled.clear_shape_effects = lambda _shape: None
+
+            compiled.add_blueprint_asset(
+                slide,
+                project,
+                "S01",
+                "MAP",
+                target_box=[0, 0, 2, 1],
+            )
+
+            self.assertEqual(0, shape.Line.Visible)
 
     def test_bitmap_uses_body_asset_and_contains_without_manual_box(self):
         with tempfile.TemporaryDirectory() as directory:

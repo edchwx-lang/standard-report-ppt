@@ -5,11 +5,28 @@ from typing import Any
 
 SCHEMA_VERSION = "6.0"
 DECONSTRUCTION_BODY_BITMAP_FORBIDDEN = "DECONSTRUCTION_BODY_BITMAP_FORBIDDEN"
+DECONSTRUCTION_NON_ATOMIC_CROP_FORBIDDEN = (
+    "DECONSTRUCTION_NON_ATOMIC_CROP_FORBIDDEN"
+)
 MAC_RECONSTRUCTION_UNSUPPORTED = "MAC_RECONSTRUCTION_UNSUPPORTED"
 _ASSET_TYPES = {"asset", "body_asset"}
 _PURE_VISUAL_KINDS = {"map", "photo", "illustration"}
 _SKELETON_ROLES = {"chapter", "title", "core_point", "source", "page_number"}
 _MAC_TYPES = {"asset", "section_header", "text", "rect", "oval", "line", "arrow", "text_card", "metric_strip", "hbar_chart", "column_chart", "line_chart", "combo_chart", "donut_chart", "grouped_hbar_chart", "flow", "matrix"}
+_WINDOWS_NATIVE_VISUAL_KINDS = {
+    "rect": {"rect"},
+    "oval": {"oval"},
+    "line": {"line"},
+    "arrow": {"arrow"},
+    "flow": {"line", "arrow", "node", "rect", "oval"},
+    "hbar_chart": {"chart"},
+    "column_chart": {"chart"},
+    "line_chart": {"chart"},
+    "combo_chart": {"chart"},
+    "donut_chart": {"chart"},
+    "grouped_hbar_chart": {"chart"},
+    "matrix": {"table"},
+}
 
 
 def _pages(value: Any) -> dict[str, Any]:
@@ -29,6 +46,16 @@ def _is_v6_deconstruct(brief: Any) -> bool:
 def _body_selected_text(page: dict[str, Any], module_id: str) -> list[str]:
     decisions = page.get("text_decisions", []) if isinstance(page.get("text_decisions"), list) else []
     return [item["selected"] for item in decisions if isinstance(item, dict) and item.get("module_id") == module_id and isinstance(item.get("selected"), str) and item["selected"].strip() and item.get("role") not in _SKELETON_ROLES]
+
+
+def _valid_windows_atomic_crop(visual: dict[str, Any]) -> bool:
+    return (
+        visual.get("crop_scope") == "independent_subject"
+        and visual.get("subject_count") == 1
+        and visual.get("tight_crop") is True
+        and visual.get("contains_editable_text") is False
+        and visual.get("contains_native_geometry") is False
+    )
 
 
 def validate_deconstruction_prebuild(brief: dict[str, Any], page_specs: dict[str, Any], alignment: dict[str, Any], backend: str) -> dict[str, Any]:
@@ -92,6 +119,48 @@ def validate_deconstruction_prebuild(brief: dict[str, Any], page_specs: dict[str
                 blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, str(slide_id), f"asset element {element.get('element_id', '?')} must have exactly one valid module binding"))
 
         visuals = [item for item in page.get("visuals", []) if isinstance(item, dict)]
+        if backend == "windows_com_v584":
+            for visual in visuals:
+                if (
+                    visual.get("treatment") == "crop"
+                    and not _valid_windows_atomic_crop(visual)
+                ):
+                    blockers.append(
+                        _issue(
+                            DECONSTRUCTION_NON_ATOMIC_CROP_FORBIDDEN,
+                            str(slide_id),
+                            (
+                                f"crop {visual.get('visual_id') or visual.get('asset_id') or '?'} "
+                                "must be one tightly bounded independent non-native subject "
+                                "without editable text or native geometry"
+                            ),
+                        )
+                    )
+            for element in elements:
+                element_id = element.get("element_id")
+                allowed_kinds = _WINDOWS_NATIVE_VISUAL_KINDS.get(
+                    element.get("type")
+                )
+                if not isinstance(element_id, str) or not allowed_kinds:
+                    continue
+                matched_native = [
+                    visual
+                    for visual in visuals
+                    if visual.get("treatment") == "native"
+                    and visual.get("element_id") == element_id
+                    and visual.get("kind") in allowed_kinds
+                ]
+                if not matched_native:
+                    blockers.append(
+                        _issue(
+                            DECONSTRUCTION_NON_ATOMIC_CROP_FORBIDDEN,
+                            str(slide_id),
+                            (
+                                f"native element {element_id} requires a matching "
+                                "native visual census record"
+                            ),
+                        )
+                    )
         page_allowed: set[str] = set()
         asset_only_modules = [(binding, bound) for binding, bound in bound_modules if bound and all(element.get("type") in _ASSET_TYPES for element in bound)]
         for binding, bound in asset_only_modules:

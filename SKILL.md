@@ -28,6 +28,7 @@ V6 项目合同：
 `construction_mode` 必须显式为 `deconstruct` 或 `bitmap`，不设默认值。V6 禁止 `fast`，也禁止两个生产方式互相静默降级。蓝图锁定前的内容、证据、写作、提示词、每页一次成功蓝图和一次无产物传输重试保持不变；`construction_mode` 只进入蓝图锁定后的缓存键。
 
 - Windows 两种方式均使用 `windows_com_v584`。
+- Windows 解构模式完整继承 V5.9.6/V5.8.4 的锁定后蓝图处理：G0–G3 视觉普查、全页及 Q1–Q4 审查、复杂非原生视觉强制局部裁切、蓝图对齐审计和渲染后保真报告。每个裁切必须是紧边界、无可编辑文字和原生几何的单一独立主体；流程、线条、箭头、图表、表格和基础几何必须反向绑定到 `native` 视觉普查记录；所有解构图片强制无轮廓。该兼容分支不作用于位图模式或 Mac。
 - macOS 两种方式均使用 `mac_python_pptx_v2`。
 - 解构模式使用全页及 Q1–Q4 审查、完整解析、原生对象重建和 `DECONSTRUCTION_EDITABILITY_FAILED` 门禁。
 - 位图模式只使用逐页全图审查，`source_px` 必须位于主体外围框线内侧；裁掉固定骨架后以 maximal centered contain 放置一个 `outline: none` 的主体图片，并保留五层骨架文字可编辑。裁切结果形成完整深色外围矩形时以 `V6_BITMAP_BODY_FRAME_INCLUDED` 阻断，只允许修订 `bitmap_alignment.json`。

@@ -971,6 +971,11 @@ def add_blueprint_asset(
     x, y, w, h = placement
     shape = slide.Shapes.AddPicture(str(image_path), 0, -1, inches(x), inches(y), inches(w), inches(h))
     clear_shape_effects(shape)
+    if (
+        DECK_META.get("schema_version") == "6.0"
+        and DECK_META.get("construction_mode") == "deconstruct"
+    ):
+        shape.Line.Visible = 0
     shape.Name = f"ASSET_{asset_id}"
     return shape
 

@@ -1308,6 +1308,12 @@ def prebuild_project(
             ).validate_reconstruction_contract(
                 brief, slides, resolved_specs, alignment_payload, backend
             )
+            alignment_audit = None
+            if backend == "windows_com_v584":
+                alignment_audit = _load_module(
+                    "standard_report_v6_windows_alignment_audit",
+                    Path(__file__).with_name("blueprint_alignment_audit.py"),
+                ).audit_project(project_dir)
             guard = _load_module(
                 "standard_report_v6_deconstruction_prebuild",
                 Path(__file__).with_name("v6_deconstruction.py"),
@@ -1327,6 +1333,7 @@ def prebuild_project(
                 "blockers": blockers,
                 "reconstruction": reconstruction,
                 "deconstruction_guard": guard,
+                "blueprint_alignment_audit": alignment_audit,
                 "allowed_large_visual_assets_by_page": guard.get(
                     "allowed_large_visual_assets_by_page", {}
                 ),
@@ -1990,6 +1997,45 @@ def _resolve_v6_output_path(
     ).resolve()
 
 
+def _run_v6_windows_deconstruct_fidelity_audit(
+    project_dir: Path,
+    brief: dict[str, Any],
+) -> dict[str, Any]:
+    """Run the V5.8.4/V5.9.6 blueprint benchmark on the V6 Windows route."""
+
+    fidelity = _load_module(
+        "standard_report_v6_windows_blueprint_fidelity",
+        Path(__file__).with_name("blueprint_fidelity.py"),
+    )
+    pairs = []
+    missing_render_ids = []
+    for index in range(1, int(brief["requested_page_count"]) + 1):
+        slide_id = f"S{index:02d}"
+        blueprint = project_dir / "blueprints" / f"{slide_id}.png"
+        rendered = (
+            project_dir
+            / ".build"
+            / "rendered"
+            / "current"
+            / f"{slide_id}.png"
+        )
+        if not rendered.is_file():
+            missing_render_ids.append(slide_id)
+            continue
+        pairs.append((slide_id, blueprint, rendered))
+    report = fidelity.compare_deck(
+        pairs,
+        expected_page_count=int(brief["requested_page_count"]),
+    )
+    if missing_render_ids:
+        report["missing_render_slide_ids"] = missing_render_ids
+    _write_json_atomic(
+        project_dir / ".build" / "blueprint_fidelity.json",
+        report,
+    )
+    return report
+
+
 def _run_v6_project(
     project_dir: Path,
     brief: dict[str, Any],
@@ -2206,6 +2252,15 @@ def _run_v6_project(
                     )
                 ),
             )
+    fidelity_report = None
+    if mode == "deconstruct" and backend == "windows_com_v584":
+        fidelity_report = guarded(
+            "blueprint_fidelity",
+            lambda: _run_v6_windows_deconstruct_fidelity_audit(
+                project_dir,
+                brief,
+            ),
+        )
     audit_module = guarded(
         "postbuild_audit",
         lambda: _load_module(
@@ -2308,6 +2363,11 @@ def _run_v6_project(
         "build_attempt": attempt_count,
         "postbuild_audit": str(audit_path),
         "render_status": render_result.get("status"),
+        "blueprint_fidelity": (
+            str(project_dir / ".build" / "blueprint_fidelity.json")
+            if fidelity_report is not None
+            else None
+        ),
         "visual_verification": bool(render_result.get("visual_verification")),
     }
     guarded(

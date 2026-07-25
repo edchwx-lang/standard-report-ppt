@@ -214,6 +214,59 @@ class V6EditabilityAuditTests(unittest.TestCase):
             self.assertTrue(any("exactly one square bullet" in item for item in messages))
             self.assertTrue(any("picture outline must be none" in item for item in messages))
 
+    def test_windows_deconstruct_audit_rejects_theme_picture_outline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            asset = Path(directory) / "icon.png"
+            Image.new("RGB", (80, 80), "navy").save(asset)
+            ppt, slide, deck = self.deck(directory)
+            picture = add_picture(
+                slide,
+                asset,
+                "EL_ICON_1",
+                1.0,
+                2.0,
+                0.6,
+                0.6,
+            )
+            add_theme_picture_outline(picture)
+            ppt.save(deck)
+            specs = {
+                "S01": {
+                    "elements": [
+                        {
+                            "element_id": "ICON",
+                            "asset_id": "ICON_ASSET",
+                            "type": "asset",
+                        }
+                    ]
+                }
+            }
+
+            report = self.subject.audit_deconstruction_pptx(
+                deck,
+                specs,
+                reviewed(),
+                builder_backend="windows_com_v584",
+            )
+
+            self.assertFalse(report["ok"])
+            self.assertTrue(
+                any(
+                    "picture outline must be none" in item["message"]
+                    for item in report["blockers"]
+                )
+            )
+            picture.line.fill.background()
+            ppt.save(deck)
+            self.assertTrue(
+                self.subject.audit_deconstruction_pptx(
+                    deck,
+                    specs,
+                    reviewed(),
+                    builder_backend="windows_com_v584",
+                )["ok"]
+            )
+
     def test_bitmap_audit_rejects_header_and_hash_chain_tampering(self):
         with tempfile.TemporaryDirectory() as directory:
             project, contract, asset = self.bitmap_contract(directory)

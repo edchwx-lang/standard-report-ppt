@@ -516,6 +516,10 @@ class V6PipelineTests(unittest.TestCase):
             ):
                 report = PIPELINE.prebuild_project(project)
             self.assertEqual("pass", report["status"])
+            self.assertTrue(
+                (project / ".build" / "blueprint_alignment_audit.json").is_file()
+            )
+            self.assertIn("blueprint_alignment_audit", report)
 
     def test_v6_deconstruct_alignment_blocks_missing_stale_and_wrong_mode_reviews(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -856,6 +860,24 @@ class V6PipelineTests(unittest.TestCase):
             self.assertEqual("success", attempt["status"])
             with self.assertRaisesRegex(ValueError, "build is locked"):
                 self.run_with_fakes(project, value)
+
+    def test_v6_windows_deconstruct_runs_blueprint_fidelity_audit(self):
+        self.assertTrue(
+            hasattr(
+                PIPELINE,
+                "_run_v6_windows_deconstruct_fidelity_audit",
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            value = self.make_locked_project(project)
+            with mock.patch.object(
+                PIPELINE,
+                "_run_v6_windows_deconstruct_fidelity_audit",
+                return_value={"passed": True, "failed_slide_ids": []},
+            ) as fidelity:
+                self.run_with_fakes(project, value)
+            fidelity.assert_called_once()
 
     def test_first_catastrophic_failure_allows_exactly_one_repair(self):
         with tempfile.TemporaryDirectory() as directory:

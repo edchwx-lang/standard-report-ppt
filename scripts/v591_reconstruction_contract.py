@@ -628,6 +628,12 @@ def validate_reconstruction_contract(
     blockers: list[dict] = []
     warnings: list[dict] = []
     alignment_pages = alignment.get("pages", {})
+    v6_windows_deconstruct = (
+        brief.get("schema_version") == "6.0"
+        and brief.get("pipeline_revision") == "6.0.0"
+        and brief.get("construction_mode") == "deconstruct"
+        and backend == "windows_com_v584"
+    )
     supported_types = SUPPORTED_ELEMENT_TYPES.get(backend)
     if supported_types is None:
         blockers.append(
@@ -783,9 +789,14 @@ def validate_reconstruction_contract(
                 )
 
         visuals = page.get("visuals", [])
-        is_v595 = brief.get("pipeline_revision") in {"5.9.5", "5.9.6"}
+        effective_visual_revision = (
+            "5.9.6"
+            if v6_windows_deconstruct
+            else brief.get("pipeline_revision")
+        )
+        is_v595 = effective_visual_revision in {"5.9.5", "5.9.6"}
         census = validate_visual_page(slide_id, {
-            "pipeline_revision": brief.get("pipeline_revision"),
+            "pipeline_revision": effective_visual_revision,
             "visual_reviewed": page.get("reviewed"),
             "visual_review": page.get("visual_review"),
             "visual_census_result": page.get("visual_census_result"),
