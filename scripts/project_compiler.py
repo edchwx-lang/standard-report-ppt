@@ -290,11 +290,13 @@ def _validate_v6_bitmap_assets(
             or element.get("asset_path") != relative
             or element.get("fit") != "contain"
             or element.get("target") != "runtime_body_box"
+            or element.get("outline") != "none"
             or "box" in element
             or record.get("asset_id") != asset_id
             or record.get("asset_path") != relative
             or record.get("fit") != "contain"
             or record.get("target") != "runtime_body_box"
+            or record.get("outline") != "none"
             or record.get("source_blueprint") != blueprints[slide_id]["path"]
             or record.get("source_blueprint_sha256")
             != blueprints[slide_id]["sha256"]

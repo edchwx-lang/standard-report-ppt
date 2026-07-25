@@ -16,6 +16,8 @@ from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
 from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+from pptx.oxml.ns import qn
+from pptx.oxml.xmlchemy import OxmlElement
 from pptx.util import Inches, Pt
 
 
@@ -65,6 +67,24 @@ def sha256_file(path: str | Path) -> str:
 
 def rgb(value: str) -> RGBColor:
     return RGBColor.from_string(str(value).lstrip("#").upper())
+
+
+def normalize_v6_core_point(value: str) -> str:
+    text = str(value).strip()
+    text = re.sub(r"^(?:[■▪▫•●□]\s*)+", "", text).strip()
+    if not text:
+        raise ValueError("V6 core point must contain text after its bullet")
+    return f"■ {text}"
+
+
+def suppress_picture_outline(picture) -> None:
+    shape_properties = picture._element.spPr
+    existing = shape_properties.find(qn("a:ln"))
+    if existing is not None:
+        shape_properties.remove(existing)
+    line = OxmlElement("a:ln")
+    line.append(OxmlElement("a:noFill"))
+    shape_properties.append(line)
 
 
 def paragraph_alignment(value):
@@ -190,6 +210,7 @@ def _add_contained_picture(
     picture.crop_right = 0
     picture.crop_top = 0
     picture.crop_bottom = 0
+    suppress_picture_outline(picture)
     ASSET_INSERTIONS.append(
         {
             "slide_id": slide_id,
@@ -322,7 +343,9 @@ def add_skeleton(slide, spec: dict, page_number: int) -> dict[str, float]:
         slide, spec["title"], [0.60, 0.60, 12.12, 0.34],
         size=16, color=WHITE, bold=True, name="SKEL_TITLE",
     )
-    core_text = "\n".join(f"■ {point}" for point in spec.get("core_points", []))
+    core_text = "\n".join(
+        normalize_v6_core_point(point) for point in spec.get("core_points", [])
+    )
     if FONT_PATH is None:
         raise RuntimeError("generation font was not resolved")
     measurement = measure_text_box(
@@ -640,6 +663,7 @@ def _render_page_spec_unsafe(
                 DECK_META["construction_mode"] != "bitmap"
                 or element.get("fit") != "contain"
                 or element.get("target") != "runtime_body_box"
+                or element.get("outline") != "none"
                 or any(key in element for key in ("box", "coord_space"))
             ):
                 raise ValueError(

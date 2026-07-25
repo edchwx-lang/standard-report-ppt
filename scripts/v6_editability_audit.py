@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,9 @@ _AUTO_SHAPE, _PICTURE, _LINE, _TEXTBOX = 1, 13, 9, 17
 _CHART_TYPES = {"hbar_chart", "column_chart", "line_chart", "combo_chart", "donut_chart", "grouped_hbar_chart"}
 _SKELETON = {"SKEL_CHAPTER", "SKEL_TITLE", "SKEL_CORE", "SKEL_SOURCE", "SKEL_PAGE_NUMBER"}
 _TEXT_TYPES = {"text", "section_header", "text_card", "metric_strip"}
+_CORE_POINT = re.compile(r"^■\s+(?![■▪▫•●□])\S")
+_A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+_P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
 
 
 def _pages(value: Any) -> dict[str, Any]:
@@ -75,11 +79,46 @@ def _selected(page: dict[str, Any]) -> list[str]:
 
 def _skeleton_errors(slide, code: str, slide_id: str) -> list[dict[str, Any]]:
     errors = []
+    shapes = {}
     for name in _SKELETON:
         shape = next((item for item in slide.shapes if item.name == name), None)
         if shape is None or shape.shape_type == _PICTURE or not shape.has_text_frame:
             errors.append(_issue(code, slide_id, f"missing native text skeleton shape {name}"))
+        else:
+            shapes[name] = shape
+    core = shapes.get("SKEL_CORE")
+    if core is not None:
+        paragraphs = [
+            paragraph.text.strip()
+            for paragraph in core.text_frame.paragraphs
+            if paragraph.text.strip()
+        ]
+        if not paragraphs or any(not _CORE_POINT.match(text) for text in paragraphs):
+            errors.append(
+                _issue(
+                    code,
+                    slide_id,
+                    "each core paragraph must contain exactly one square bullet",
+                )
+            )
     return errors
+
+
+def _picture_outline_is_none(shape) -> bool:
+    properties = shape._element.spPr
+    line = properties.find(f"{{{_A_NS}}}ln")
+    if line is not None:
+        return line.find(f"{{{_A_NS}}}noFill") is not None
+    style = shape._element.find(f"{{{_P_NS}}}style")
+    if style is None:
+        return True
+    line_ref = style.find(f"{{{_A_NS}}}lnRef")
+    if line_ref is None:
+        return True
+    try:
+        return int(line_ref.get("idx", "0")) == 0
+    except ValueError:
+        return False
 
 
 def audit_deconstruction_pptx(
@@ -220,6 +259,8 @@ def audit_bitmap_pptx(pptx_path: str | Path, bitmap_contract: dict[str, Any], pr
         slide_id = f"S{number:02d}"; record = pages.get(slide_id, {}) if isinstance(pages.get(slide_id, {}), dict) else {}
         blockers.extend(_skeleton_errors(slide, BITMAP_CONTRACT_INVALID, slide_id))
         asset_id = record.get("asset_id"); expected = _prefix(asset_id) if isinstance(asset_id, str) else ""
+        if record.get("outline") != "none":
+            blockers.append(_issue(BITMAP_CONTRACT_INVALID, slide_id, "bitmap contract outline must be none"))
         blueprint = _project_path(project, record.get("source_blueprint")); asset = _project_path(project, record.get("asset_path"))
         if blueprint is None or not blueprint.is_file() or _sha256(blueprint) != record.get("source_blueprint_sha256"):
             blockers.append(_issue(BITMAP_CONTRACT_INVALID, slide_id, "source blueprint hash chain is invalid"))
@@ -236,6 +277,8 @@ def audit_bitmap_pptx(pptx_path: str | Path, bitmap_contract: dict[str, Any], pr
             blockers.append(_issue(BITMAP_CONTRACT_INVALID, slide_id, "body picture SHA-256 does not match contract"))
         if any(abs(getattr(shape, name, 0)) > 1e-6 for name in ("crop_left", "crop_right", "crop_top", "crop_bottom")):
             blockers.append(_issue(BITMAP_CONTRACT_INVALID, slide_id, "body picture must not be cropped"))
+        if not _picture_outline_is_none(shape):
+            blockers.append(_issue(BITMAP_CONTRACT_INVALID, slide_id, "body picture outline must be none"))
         left, top, width, height = _box(shape); aspect = shape.image.size[0] / shape.image.size[1]; body_aspect = body[2] / body[3] if body[3] else 0
         expected_width, expected_height = (body[2], body[2] / aspect) if aspect >= body_aspect else (body[3] * aspect, body[3])
         expected_left = body[0] + (body[2] - expected_width) / 2; expected_top = body[1] + (body[3] - expected_height) / 2

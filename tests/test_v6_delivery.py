@@ -138,6 +138,7 @@ class V6DeliveryTests(unittest.TestCase):
                             "asset_sha256": hashlib.sha256(body.read_bytes()).hexdigest(),
                             "fit": "contain",
                             "target": "runtime_body_box",
+                            "outline": "none",
                         }
                     },
                 }),
@@ -155,6 +156,7 @@ class V6DeliveryTests(unittest.TestCase):
                                     "asset_path": ".build/assets/S01/S01_BODY_BITMAP.png",
                                     "fit": "contain",
                                     "target": "runtime_body_box",
+                                    "outline": "none",
                                 }
                             ]
                         }

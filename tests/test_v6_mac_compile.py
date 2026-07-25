@@ -10,6 +10,7 @@ from pathlib import Path
 from PIL import Image
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.oxml.ns import qn
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -517,6 +518,7 @@ class V6MacCompileTests(unittest.TestCase):
                         "asset_id": asset_id,
                         "fit": "contain",
                         "target": "runtime_body_box",
+                        "outline": "none",
                     }
                 ]
             }
@@ -536,6 +538,7 @@ class V6MacCompileTests(unittest.TestCase):
                     ),
                     "fit": "contain",
                     "target": "runtime_body_box",
+                    "outline": "none",
                 }
             },
         }
@@ -578,6 +581,9 @@ class V6MacCompileTests(unittest.TestCase):
         )
         self.assertEqual(0, body.crop_left)
         self.assertEqual(0, body.crop_bottom)
+        line = body._element.spPr.find(qn("a:ln"))
+        self.assertIsNotNone(line)
+        self.assertIsNotNone(line.find(qn("a:noFill")))
         self.assertTrue(all(
             any(shape.name == skeleton and shape.has_text_frame for shape in slide.shapes)
             for skeleton in (
@@ -601,6 +607,24 @@ class V6MacCompileTests(unittest.TestCase):
         self.assertEqual("6.0", asset_report["schema_version"])
         self.assertEqual("bitmap", asset_report["construction_mode"])
         self.assertEqual(sha256_file(asset), asset_report["assets"][0]["source_sha256"])
+
+    def test_core_judgment_normalizes_legacy_leading_bullets(self):
+        project = self._project("deconstruct")
+        slides_path = project / ".build" / "slides.json"
+        slides = json.loads(slides_path.read_text(encoding="utf-8"))
+        slides[0]["core_points"] = ["■ ■ Editable reconstruction"]
+        slides_path.write_text(json.dumps(slides), encoding="utf-8")
+        self._materialize_deconstruct(project, [])
+
+        _, output = self._compile_and_build(project)
+
+        presentation = Presentation(output)
+        core = next(
+            shape
+            for shape in presentation.slides[0].shapes
+            if shape.name == "SKEL_CORE"
+        )
+        self.assertEqual("■ Editable reconstruction", core.text)
 
     def test_compiler_rejects_non_v6_projects(self):
         project = self._project("deconstruct")
@@ -902,6 +926,7 @@ class V6MacCompileTests(unittest.TestCase):
                                     "asset_id": asset_id,
                                     "fit": "contain",
                                     "target": "runtime_body_box",
+                                    "outline": "none",
                                 }
                             ]
                         }
@@ -924,6 +949,7 @@ class V6MacCompileTests(unittest.TestCase):
                         ),
                         "fit": "contain",
                         "target": "runtime_body_box",
+                        "outline": "none",
                     }
                 },
             }
@@ -948,6 +974,7 @@ class V6MacCompileTests(unittest.TestCase):
                                 "asset_id": "S01_BODY_BITMAP",
                                 "fit": "contain",
                                 "target": "runtime_body_box",
+                                "outline": "none",
                             }
                         ]
                     }
@@ -973,6 +1000,7 @@ class V6MacCompileTests(unittest.TestCase):
                                 "asset_id": "S01_BODY_BITMAP",
                                 "fit": "contain",
                                 "target": "runtime_body_box",
+                                "outline": "none",
                             }
                         ]
                     }
@@ -1007,6 +1035,7 @@ class V6MacCompileTests(unittest.TestCase):
                                 "asset_id": asset_id,
                                 "fit": "contain",
                                 "target": "runtime_body_box",
+                                "outline": "none",
                             }
                         ]
                     }
@@ -1027,6 +1056,7 @@ class V6MacCompileTests(unittest.TestCase):
                     "source_blueprint_sha256": "0" * 64,
                     "fit": "contain",
                     "target": "runtime_body_box",
+                    "outline": "none",
                 }
             },
         }

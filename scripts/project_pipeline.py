@@ -1028,35 +1028,38 @@ def _materialize_v583_if_present(project_dir: Path) -> None:
     materialize_project(project_dir)
 
 
-def compile_project(project_dir: str | Path) -> Path:
+def _dispatch_v6_compiler(project_dir: Path, brief: dict[str, Any]) -> Path:
+    runtime_path = project_dir / ".build" / "runtime_report.json"
+    if not runtime_path.is_file():
+        raise RuntimeError("V6 runtime report is missing; run --init first")
+    backend = _read_json(runtime_path).get("builder_backend")
+    if backend == "mac_python_pptx_v2":
+        compiler_path = Path(__file__).with_name("project_compiler_mac_v2.py")
+        module_name = "standard_report_v6_mac_compiler"
+    elif backend == "windows_com_v584":
+        compiler_path = Path(__file__).with_name("project_compiler.py")
+        module_name = "standard_report_v6_windows_compiler"
+    else:
+        raise RuntimeError(f"unsupported or missing V6 builder backend: {backend}")
+    compiler = _load_module(module_name, compiler_path)
+    return _stage(
+        project_dir, "compile", lambda: compiler.compile_project(project_dir)
+    )
+
+
+def compile_project(
+    project_dir: str | Path,
+    *,
+    _v6_post_lock_prepared: bool = False,
+) -> Path:
     project_dir = Path(project_dir).resolve()
     _materialize_v583_if_present(project_dir)
     brief = _read_json(project_dir / "project_brief.json")
     runtime_path = project_dir / ".build" / "runtime_report.json"
     if brief.get("schema_version") == "6.0":
-        gate = _load_module(
-            "standard_report_v6_blueprint_gate_compile",
-            Path(__file__).with_name("v6_blueprint_gate.py"),
-        )
-        gate.assert_blueprint_gate(
-            project_dir,
-            require_alignment=brief.get("construction_mode") == "deconstruct",
-        )
-        if not runtime_path.is_file():
-            raise RuntimeError("V6 runtime report is missing; run --init first")
-        backend = _read_json(runtime_path).get("builder_backend")
-        if backend == "mac_python_pptx_v2":
-            compiler_path = Path(__file__).with_name("project_compiler_mac_v2.py")
-            module_name = "standard_report_v6_mac_compiler"
-        elif backend == "windows_com_v584":
-            compiler_path = Path(__file__).with_name("project_compiler.py")
-            module_name = "standard_report_v6_windows_compiler"
-        else:
-            raise RuntimeError(f"unsupported or missing V6 builder backend: {backend}")
-        compiler = _load_module(module_name, compiler_path)
-        return _stage(
-            project_dir, "compile", lambda: compiler.compile_project(project_dir)
-        )
+        if not _v6_post_lock_prepared:
+            prebuild_project(project_dir)
+        return _dispatch_v6_compiler(project_dir, brief)
     if brief.get("schema_version") != "5.9" and not runtime_path.is_file():
         compiler = _load_module(
             "standard_report_legacy_compiler",
@@ -1974,6 +1977,19 @@ def _assert_v6_repair_contract_unchanged(
         )
 
 
+def _resolve_v6_output_path(
+    project_dir: Path,
+    output_path: str | Path | None,
+    construction_mode: str,
+) -> Path:
+    if output_path is not None:
+        return Path(output_path).expanduser().resolve()
+    suffix = "解构版" if construction_mode == "deconstruct" else "位图版"
+    return (
+        project_dir / "output" / f"{project_dir.name}_{suffix}.pptx"
+    ).resolve()
+
+
 def _run_v6_project(
     project_dir: Path,
     brief: dict[str, Any],
@@ -2019,11 +2035,7 @@ def _run_v6_project(
         if previous.get("builder_backend") != backend:
             raise ValueError("V6 repair cannot change builder backend")
     suffix = "解构版" if mode == "deconstruct" else "位图版"
-    output = (
-        Path(output_path)
-        if output_path is not None
-        else project_dir / "output" / f"{project_dir.name}_{suffix}.pptx"
-    )
+    output = _resolve_v6_output_path(project_dir, output_path, mode)
     output.parent.mkdir(parents=True, exist_ok=True)
     attempt = {
         "schema_version": "6.0",
@@ -2079,7 +2091,13 @@ def _run_v6_project(
             ),
         ),
     )
-    generator = guarded("compile", lambda: compile_project(project_dir))
+    generator = guarded(
+        "compile",
+        lambda: compile_project(
+            project_dir,
+            _v6_post_lock_prepared=True,
+        ),
+    )
     if backend == "windows_com_v584":
         guarded(
             "windows_runtime",

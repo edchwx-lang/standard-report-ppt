@@ -25,6 +25,7 @@ def load(name: str, relative: str):
 
 PIPELINE = load("v6_pipeline_tests", "scripts/project_pipeline.py")
 GATE = load("v6_gate_tests", "scripts/v6_blueprint_gate.py")
+BITMAP = load("v6_bitmap_pipeline_tests", "scripts/v6_bitmap.py")
 
 
 def brief(mode: str | None = "deconstruct") -> dict:
@@ -292,6 +293,23 @@ class V6PipelineTests(unittest.TestCase):
         value = brief("bitmap")
         value["production_mode"] = "fast"
         self.assertIn("V6_PRODUCTION_MODE_INVALID", PIPELINE.validate_brief(value))
+
+    def test_v6_output_path_is_absolute_before_powerpoint_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            relative = Path("output") / "report.pptx"
+            self.assertEqual(
+                relative.resolve(),
+                PIPELINE._resolve_v6_output_path(
+                    project,
+                    relative,
+                    "bitmap",
+                ),
+            )
+            self.assertEqual(
+                (project / "output" / f"{project.name}_位图版.pptx").resolve(),
+                PIPELINE._resolve_v6_output_path(project, None, "bitmap"),
+            )
 
     def test_user_mode_aliases_are_explicitly_normalized(self):
         contracts = load("v6_alias_contracts", "scripts/v6_contracts.py")
@@ -608,18 +626,89 @@ class V6PipelineTests(unittest.TestCase):
             (project / ".build" / "runtime_report.json").write_text(
                 json.dumps({"builder_backend": "mac_python_pptx_v2"}), encoding="utf-8"
             )
-            with mock.patch.object(PIPELINE, "_load_module") as loader:
-                gate = SimpleNamespace(assert_blueprint_gate=lambda *args, **kwargs: {})
+            with (
+                mock.patch.object(PIPELINE, "prebuild_project") as prebuild,
+                mock.patch.object(PIPELINE, "_load_module") as loader,
+            ):
                 compiler = SimpleNamespace(
                     compile_project=lambda *args, **kwargs: project / "generate_deck.py"
                 )
-                loader.side_effect = [gate, compiler]
+                loader.return_value = compiler
                 PIPELINE.compile_project(project)
+                prebuild.assert_called_once_with(project)
                 self.assertTrue(
                     str(loader.call_args_list[-1].args[1]).endswith(
                         "project_compiler_mac_v2.py"
                     )
                 )
+
+    def test_bitmap_compile_materializes_post_lock_inputs_before_compiler_dispatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            build = project / ".build"
+            build.mkdir()
+            (project / "project_brief.json").write_text(
+                json.dumps(brief("bitmap")), encoding="utf-8"
+            )
+            (build / "runtime_report.json").write_text(
+                json.dumps({"builder_backend": "windows_com_v584"}),
+                encoding="utf-8",
+            )
+            source = project / "source.png"
+            Image.new("RGB", (1600, 900), "white").save(source)
+            GATE.record_artifact(
+                project,
+                "S01",
+                source,
+                transport_attempt_count=1,
+            )
+            (build / "slides.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "slide_id": "S01",
+                            "chapter": "Chapter",
+                            "title": "Title",
+                            "core_points": ["Core"],
+                            "source": "Source",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            review = BITMAP.prepare_bitmap_review(project)
+            (build / "bitmap_alignment.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "6.0",
+                        "pipeline_revision": "6.0.0",
+                        "construction_mode": "bitmap",
+                        "pages": {
+                            "S01": {
+                                "reviewed_full_page": True,
+                                "blueprint_sha256": review["pages"]["S01"][
+                                    "blueprint_sha256"
+                                ],
+                                "source_px": [20, 250, 1580, 850],
+                                "excluded_skeleton_regions": list(
+                                    BITMAP.EXCLUDED_SKELETON_REGIONS
+                                ),
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            generator = PIPELINE.compile_project(project)
+
+            self.assertTrue(generator.is_file())
+            for name in (
+                "formal_blueprint_manifest.json",
+                "bitmap_contract.json",
+                "bitmap_page_specs.json",
+            ):
+                self.assertTrue((build / name).is_file(), name)
 
     def test_formal_blueprint_bytes_are_identical_across_modes(self):
         payload = Image.new("RGB", (20, 20), "blue")

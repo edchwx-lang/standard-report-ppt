@@ -34,6 +34,7 @@ ERROR_BLUEPRINT_HASH = "V6_BITMAP_BLUEPRINT_HASH_MISMATCH"
 ERROR_CROP_BOUNDS = "V6_BITMAP_BODY_CROP_BOUNDS_INVALID"
 ERROR_FULL_IMAGE_CROP = "V6_BITMAP_FULL_IMAGE_CROP_FORBIDDEN"
 ERROR_EXCLUDED_REGIONS = "V6_BITMAP_EXCLUDED_SKELETON_REGIONS_INVALID"
+ERROR_BODY_FRAME_INCLUDED = "V6_BITMAP_BODY_FRAME_INCLUDED"
 
 
 def sha256_file(path: str | Path) -> str:
@@ -164,6 +165,49 @@ def _valid_crop(value: Any, width: int, height: int) -> tuple[bool, bool]:
     return True, value == [0, 0, width, height]
 
 
+def _has_complete_perimeter_frame(image: Image.Image) -> bool:
+    """Detect a dark, continuous rectangular frame touching all crop edges."""
+
+    rgba = image.convert("RGBA")
+    background = Image.new("RGBA", rgba.size, "white")
+    flattened = Image.alpha_composite(background, rgba).convert("RGB")
+    width, height = flattened.size
+    if width < 8 or height < 8:
+        return False
+    band = min(3, width // 4, height // 4)
+
+    def dark(pixel: tuple[int, int, int]) -> bool:
+        red, green, blue = pixel
+        return (red * 299 + green * 587 + blue * 114) / 1000 <= 150
+
+    def horizontal(y: int) -> float:
+        return sum(dark(flattened.getpixel((x, y))) for x in range(width)) / width
+
+    def vertical(x: int) -> float:
+        return sum(dark(flattened.getpixel((x, y))) for y in range(height)) / height
+
+    top = max(horizontal(y) for y in range(band))
+    bottom = max(horizontal(height - 1 - y) for y in range(band))
+    left = max(vertical(x) for x in range(band))
+    right = max(vertical(width - 1 - x) for x in range(band))
+    inset = min(max(band + 2, 5), width // 4, height // 4)
+    inner = (
+        horizontal(inset),
+        horizontal(height - 1 - inset),
+        vertical(inset),
+        vertical(width - 1 - inset),
+    )
+    edges = (top, bottom, left, right)
+    return min(edges) >= 0.90 and all(
+        edge - inside >= 0.30 for edge, inside in zip(edges, inner)
+    )
+
+
+def _assert_borderless_body_crop(image: Image.Image, slide_id: str) -> None:
+    if _has_complete_perimeter_frame(image):
+        raise ValueError(f"{ERROR_BODY_FRAME_INCLUDED}: {slide_id}")
+
+
 def validate_bitmap_alignment(
     project_dir: str | Path,
     payload: dict[str, Any],
@@ -260,6 +304,7 @@ def materialize_bitmap_assets(
         asset.parent.mkdir(parents=True, exist_ok=True)
         with Image.open(blueprint) as image:
             expected = image.crop(tuple(source_px)).convert("RGBA")
+            _assert_borderless_body_crop(expected, slide_id)
             if slide_id in reused and asset.is_file():
                 with Image.open(asset) as existing:
                     actual = existing.convert("RGBA")
@@ -280,6 +325,7 @@ def materialize_bitmap_assets(
             "asset_sha256": sha256_file(asset),
             "fit": "contain",
             "target": "runtime_body_box",
+            "outline": "none",
         }
         page_specs[slide_id] = {
             "elements": [
@@ -290,6 +336,7 @@ def materialize_bitmap_assets(
                     "asset_path": asset_path,
                     "fit": "contain",
                     "target": "runtime_body_box",
+                    "outline": "none",
                 }
             ]
         }
@@ -331,4 +378,6 @@ def materialize_bitmap_batch_assets(
         asset = project / ".build" / "assets" / slide_id / f"{asset_id}.png"
         asset.parent.mkdir(parents=True, exist_ok=True)
         with Image.open(blueprint) as image:
-            image.crop(tuple(source_px)).convert("RGBA").save(asset)
+            expected = image.crop(tuple(source_px)).convert("RGBA")
+            _assert_borderless_body_crop(expected, slide_id)
+            expected.save(asset)

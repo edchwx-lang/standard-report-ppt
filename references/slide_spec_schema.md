@@ -4,7 +4,14 @@ New V6 projects declare schema `6.0`, pipeline revision `6.0.0`, production mode
 `blueprint`, and an explicit `construction_mode` of `deconstruct` or `bitmap`.
 V6 `fast` is invalid. Deconstruction consumes `.build/page_specs.json`; bitmap
 consumes `.build/bitmap_page_specs.json`, whose sole page element is
-`type: body_asset`, `fit: contain`, `target: runtime_body_box`.
+`type: body_asset`, `fit: contain`, `target: runtime_body_box`,
+`outline: none`.
+
+V6 `core_points` remain canonical content and may contain a legacy leading
+bullet. Both runtime builders remove consecutive leading bullet glyphs and
+render exactly one editable `■` per core paragraph. Standalone `--compile`
+materializes the current post-lock contracts before compiler dispatch; it
+never calls ImageGen, builds a PPTX, renders, or packages.
 
 All V6 runtime elements have stable `element_id`; generated shapes are named
 `EL_<element_id>_<n>`. Mac normalizes them into `.build/mac_page_specs.json`

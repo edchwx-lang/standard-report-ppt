@@ -424,6 +424,7 @@ class V6MacSpecTests(unittest.TestCase):
                         "asset_id": "S01_BODY_BITMAP",
                         "fit": "contain",
                         "target": "runtime_body_box",
+                        "outline": "none",
                     }
                 ]
             }

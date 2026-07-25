@@ -643,6 +643,7 @@ def normalize_mac_page_specs(
                     or not element.get("asset_id")
                     or element.get("fit") != "contain"
                     or element.get("target") != "runtime_body_box"
+                    or element.get("outline") != "none"
                     or any(
                         key in element
                         for key in ("box", "body_box", "absolute_box", "coord_space")
@@ -652,7 +653,7 @@ def normalize_mac_page_specs(
                         _issue(
                             slide_id,
                             element_id,
-                            "body_asset requires asset_id, contain, runtime target, and no manual box",
+                        "body_asset requires asset_id, contain, runtime target, outline none, and no manual box",
                         )
                     )
                     continue

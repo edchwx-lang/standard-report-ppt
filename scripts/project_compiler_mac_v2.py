@@ -386,6 +386,7 @@ def _bitmap_assets(
             or raw.get("asset_sha256") != sha256_file(path)
             or raw.get("fit") != "contain"
             or raw.get("target") != "runtime_body_box"
+            or raw.get("outline") != "none"
         ):
             raise ValueError(f"{ERROR_ASSET}: {slide_id} bitmap asset is stale")
         if (

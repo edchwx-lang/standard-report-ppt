@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +27,9 @@ class V6BitmapTests(unittest.TestCase):
     def write_blueprint(self, project: Path, slide_id: str = "S01") -> Path:
         destination = project / "blueprints" / f"{slide_id}.png"
         destination.parent.mkdir()
-        Image.new("RGB", (200, 100), "navy").save(destination)
+        image = Image.new("RGB", (200, 100), "white")
+        ImageDraw.Draw(image).rectangle((30, 30, 170, 80), fill="navy")
+        image.save(destination)
         return destination
 
     def alignment(self, review: dict, slide_id: str = "S01") -> dict:
@@ -132,6 +134,7 @@ class V6BitmapTests(unittest.TestCase):
             self.assertEqual("S01_BODY_BITMAP", page["asset_id"])
             self.assertEqual("contain", page["fit"])
             self.assertEqual("runtime_body_box", page["target"])
+            self.assertEqual("none", page["outline"])
             self.assertEqual("bitmap", contract["construction_mode"])
             with Image.open(asset) as image:
                 self.assertEqual((180, 70), image.size)
@@ -143,7 +146,27 @@ class V6BitmapTests(unittest.TestCase):
             elements = specs["S01"]["elements"]
             self.assertEqual(1, len(elements))
             self.assertEqual("body_asset", elements[0]["type"])
+            self.assertEqual("none", elements[0]["outline"])
             self.assertNotIn("box", elements[0])
+
+    def test_materialize_rejects_a_complete_perimeter_frame_in_the_selected_crop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            blueprint = self.write_blueprint(project)
+            with Image.open(blueprint) as source:
+                image = source.copy()
+            ImageDraw.Draw(image).rectangle((10, 20, 189, 89), outline="black", width=2)
+            image.save(blueprint)
+            review = self.bitmap.prepare_bitmap_review(project)
+            alignment = self.alignment(review)
+            (project / ".build" / "bitmap_alignment.json").write_text(
+                json.dumps(alignment), encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(
+                ValueError, "V6_BITMAP_BODY_FRAME_INCLUDED"
+            ):
+                self.bitmap.materialize_bitmap_assets(project)
 
     def test_materialize_refuses_missing_review_record(self):
         with tempfile.TemporaryDirectory() as directory:

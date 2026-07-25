@@ -13,6 +13,7 @@ from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE
 from pptx.enum.shapes import MSO_SHAPE
+from pptx.oxml.xmlchemy import OxmlElement
 from pptx.util import Inches
 
 
@@ -37,7 +38,7 @@ def reviewed(decisions=None):
 
 
 def add_skeleton(slide):
-    definitions = (("SKEL_CHAPTER", .56, .1, 11.13, .2, "Chapter"), ("SKEL_TITLE", .56, .3, 11.13, .2, "Title"), ("SKEL_CORE", .56, .5, 11.13, .1, "Core"), ("SKEL_SOURCE", .56, 6.8, 11.13, .1, "Source"), ("SKEL_PAGE_NUMBER", .56, 6.95, 1, .1, "1"))
+    definitions = (("SKEL_CHAPTER", .56, .1, 11.13, .2, "Chapter"), ("SKEL_TITLE", .56, .3, 11.13, .2, "Title"), ("SKEL_CORE", .56, .5, 11.13, .1, "■ Core"), ("SKEL_SOURCE", .56, 6.8, 11.13, .1, "Source"), ("SKEL_PAGE_NUMBER", .56, 6.95, 1, .1, "1"))
     for name, left, top, width, height, text in definitions:
         shape = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
         shape.name, shape.text = name, text
@@ -47,6 +48,17 @@ def add_picture(slide, asset, name, left=.56, top=.88, width=11.13, height=5.565
     shape = slide.shapes.add_picture(str(asset), Inches(left), Inches(top), Inches(width), Inches(height))
     shape.name = name
     return shape
+
+
+def add_theme_picture_outline(shape):
+    style = OxmlElement("p:style")
+    line_ref = OxmlElement("a:lnRef")
+    line_ref.set("idx", "2")
+    scheme = OxmlElement("a:schemeClr")
+    scheme.set("val", "dk1")
+    line_ref.append(scheme)
+    style.append(line_ref)
+    shape._element.append(style)
 
 
 class V6EditabilityAuditTests(unittest.TestCase):
@@ -176,6 +188,31 @@ class V6EditabilityAuditTests(unittest.TestCase):
                     self.assertEqual(case == "good", report["ok"])
             ppt, slide, deck = self.deck(directory); add_picture(slide, asset, "EL_S01_BODY_BITMAP_1"); add_picture(slide, asset, "EL_OTHER_1", 1, 1, 2, 1); ppt.save(deck)
             self.assertFalse(self.subject.audit_bitmap_pptx(deck, contract, project)["ok"])
+
+    def test_bitmap_audit_rejects_duplicate_core_bullet_and_theme_picture_outline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project, contract, asset = self.bitmap_contract(directory)
+            ppt, slide, deck = self.deck(directory)
+            core = next(shape for shape in slide.shapes if shape.name == "SKEL_CORE")
+            core.text = "■ ■ Core"
+            picture = add_picture(
+                slide,
+                asset,
+                "EL_S01_BODY_BITMAP_1",
+                .56,
+                1.1725,
+                11.13,
+                4.98,
+            )
+            add_theme_picture_outline(picture)
+            ppt.save(deck)
+
+            report = self.subject.audit_bitmap_pptx(deck, contract, project)
+
+            self.assertFalse(report["ok"])
+            messages = [item["message"] for item in report["blockers"]]
+            self.assertTrue(any("exactly one square bullet" in item for item in messages))
+            self.assertTrue(any("picture outline must be none" in item for item in messages))
 
     def test_bitmap_audit_rejects_header_and_hash_chain_tampering(self):
         with tempfile.TemporaryDirectory() as directory:

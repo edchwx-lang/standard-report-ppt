@@ -4,8 +4,11 @@ V6 adds a mode-specific catastrophic gate. Deconstruction requires every
 expected element and selected text in OOXML, native editable table/chart/flow
 semantics, and no unapproved image covering 60% or more of the runtime body.
 Bitmap construction requires exactly one hash-identical, zero-crop, maximal
-centered-contain body picture plus five native skeleton text shapes. A failed
-mode never switches to the other mode.
+centered-contain body picture with `outline: none` plus five native skeleton
+text shapes. Every core paragraph contains exactly one editable `■` prefix.
+A selected bitmap with a complete dark perimeter frame, a theme picture line,
+or an explicit visible outline is blocking. A failed mode never switches to
+the other mode.
 
 ## V5.8.4 compatibility
 

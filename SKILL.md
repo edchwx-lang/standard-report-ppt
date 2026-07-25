@@ -30,7 +30,9 @@ V6 项目合同：
 - Windows 两种方式均使用 `windows_com_v584`。
 - macOS 两种方式均使用 `mac_python_pptx_v2`。
 - 解构模式使用全页及 Q1–Q4 审查、完整解析、原生对象重建和 `DECONSTRUCTION_EDITABILITY_FAILED` 门禁。
-- 位图模式只使用逐页全图审查，裁掉固定骨架后以 maximal centered contain 放置一个主体图片，并保留五层骨架文字可编辑。
+- 位图模式只使用逐页全图审查，`source_px` 必须位于主体外围框线内侧；裁掉固定骨架后以 maximal centered contain 放置一个 `outline: none` 的主体图片，并保留五层骨架文字可编辑。裁切结果形成完整深色外围矩形时以 `V6_BITMAP_BODY_FRAME_INCLUDED` 阻断，只允许修订 `bitmap_alignment.json`。
+- V6 构建器兼容 `core_points` 中历史遗留的前导项目符号，但最终每个核心判断段落必须只显示一个 `■`；重复符号或只有符号没有正文均阻断。
+- V6 `--compile` 会先确定性生成当前模式所需的正式蓝图清单、裁切合同及运行时 page specs；它不调用 ImageGen、不构建、不渲染也不打包。
 - V6 为 RC：Windows 与 OOXML 自动测试是发布门槛；真实 PowerPoint for Mac 的生成、打开、渲染和编辑冒烟测试通过后才标记正式 V6.0.0。
 
 CLI：
@@ -38,6 +40,7 @@ CLI：
 ```powershell
 python scripts/project_pipeline.py <project> --prepare-visual-review
 python scripts/project_pipeline.py <project> --prepare-bitmap-review
+python scripts/project_pipeline.py <project> --compile
 python scripts/project_pipeline.py <project> --run
 ```
 

@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from PIL import Image
 
@@ -54,6 +55,18 @@ def project_files(project: Path, mode: str, elements: list[dict]) -> None:
         "source": "来源",
     }]
     (project / ".build" / "slides.json").write_text(json.dumps(slides), encoding="utf-8")
+    if mode == "bitmap":
+        elements = [
+            {
+                **element,
+                **(
+                    {"outline": "none"}
+                    if element.get("type") == "body_asset"
+                    else {}
+                ),
+            }
+            for element in elements
+        ]
     name = "page_specs.json" if mode == "deconstruct" else "bitmap_page_specs.json"
     (project / ".build" / name).write_text(
         json.dumps({"S01": {"elements": elements}}), encoding="utf-8"
@@ -127,6 +140,7 @@ def materialize_bitmap_contract(
                         "asset_sha256": hashlib.sha256(asset.read_bytes()).hexdigest(),
                         "fit": "contain",
                         "target": "runtime_body_box",
+                        "outline": "none",
                     }
                 },
             }
@@ -212,6 +226,38 @@ class V6WindowsCompileTests(unittest.TestCase):
             source = generator.read_text(encoding="utf-8")
             self.assertIn("kind == \"body_asset\"", source)
             self.assertIn('"construction_mode": "bitmap"', source)
+
+            spec = importlib.util.spec_from_file_location(
+                "compiled_v6_windows_bitmap", generator
+            )
+            compiled = importlib.util.module_from_spec(spec)
+            assert spec.loader is not None
+            spec.loader.exec_module(compiled)
+            self.assertEqual(
+                "■ 判断",
+                compiled.normalize_v6_core_point("■ ■ 判断"),
+            )
+
+            shape = SimpleNamespace(Line=SimpleNamespace(Visible=-1))
+            shapes = SimpleNamespace(AddPicture=lambda *args: shape)
+            slide = SimpleNamespace(Shapes=shapes)
+            compiled.clear_shape_effects = lambda _shape: None
+            compiled.add_body_asset(
+                slide,
+                project,
+                {
+                    "element_id": "S01_BODY_BITMAP",
+                    "asset_id": "S01_BODY_BITMAP",
+                    "asset_path": ".build/assets/S01/S01_BODY_BITMAP.png",
+                    "type": "body_asset",
+                    "fit": "contain",
+                    "target": "runtime_body_box",
+                    "outline": "none",
+                },
+                {"left": .56, "top": 1.2, "width": 11.13, "height": 5.0},
+                "S01",
+            )
+            self.assertEqual(0, shape.Line.Visible)
 
     def test_missing_bitmap_asset_is_blocking(self):
         with tempfile.TemporaryDirectory() as directory:

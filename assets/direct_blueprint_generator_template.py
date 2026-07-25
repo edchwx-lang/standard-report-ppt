@@ -233,6 +233,14 @@ def estimated_core_height(points: list[str], width: float = RIGHT - LEFT) -> flo
     return max(0.62, 0.18 + lines * (12.0 * 1.20 / 72.0) + max(0, len(points) - 1) * (6.0 / 72.0))
 
 
+def normalize_v6_core_point(value: str) -> str:
+    text = str(value).strip()
+    text = re.sub(r"^(?:[■▪▫•●□]\s*)+", "", text).strip()
+    if not text:
+        raise ValueError("V6 core point must contain text after its bullet")
+    return f"■ {text}"
+
+
 def add_textbox(
     slide,
     text: str,
@@ -837,7 +845,10 @@ def add_skeleton(slide, spec: dict, page_number: int) -> dict[str, float]:
     title_bar.TextFrame2.TextRange.ParagraphFormat.Alignment = 1
 
     points = spec["core_points"]
-    core_text = "\r".join(f"\u25A0 {point}" for point in points)
+    if DECK_META.get("schema_version") == "6.0":
+        core_text = "\r".join(normalize_v6_core_point(point) for point in points)
+    else:
+        core_text = "\r".join(f"\u25A0 {point}" for point in points)
     estimated_height = estimated_core_height(points)
     core_box = add_textbox(
         slide,
@@ -978,6 +989,7 @@ def add_body_asset(
         or DECK_META.get("construction_mode") != "bitmap"
         or element.get("fit") != "contain"
         or element.get("target") != "runtime_body_box"
+        or element.get("outline") != "none"
     ):
         raise ValueError("body_asset is reserved for V6 bitmap construction")
     asset_id = f"{slide_id}_BODY_BITMAP"
@@ -1005,6 +1017,7 @@ def add_body_asset(
         str(image_path), 0, -1, inches(x), inches(y), inches(w), inches(h)
     )
     clear_shape_effects(shape)
+    shape.Line.Visible = 0
     return shape
 
 
