@@ -1,4 +1,21 @@
-# PPT quality policy V5.8.4
+# PPT quality policy V6.0
+
+V6 adds a mode-specific catastrophic gate. Deconstruction requires every
+expected element and selected text in OOXML, native editable table/chart/flow
+semantics, and no unapproved image covering 60% or more of the runtime body.
+Bitmap construction requires exactly one hash-identical, zero-crop, maximal
+centered-contain body picture with `outline: none` plus five native skeleton
+text shapes. Every core paragraph contains exactly one editable `■` prefix.
+A selected bitmap with a complete dark perimeter frame, a theme picture line,
+or an explicit visible outline is blocking. A failed mode never switches to
+the other mode.
+
+Both V6 deconstruction backends reject non-atomic crops, composite module
+screenshots, missing reverse native-visual census records, picture outlines,
+and crops containing a complete dark perimeter frame. These checks occur only
+after the immutable blueprint has been locked.
+
+## V5.8.4 compatibility
 
 V5.8.4 retains V5.8.3 intake and the V5.8.2 visual-first default-release policy. It adds one internal post-blueprint alignment stage so display text, visual subjects, and module topology reach the PPT builder.
 

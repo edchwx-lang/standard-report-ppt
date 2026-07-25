@@ -1,7 +1,7 @@
 interface:
   display_name: "Standard Report PPT"
-  short_description: "V5.9.6 cross-platform blueprint-aligned editable consulting decks"
+  short_description: "V6.0.0-rc1 blueprint-first deconstruct or bitmap consulting decks"
   brand_color: "#2F5597"
-default_prompt: "Use $standard-report-ppt V5.9.6 with V5.8 compatibility; confirm the exact page count and mode, use the real first slide as the ImageGen capability probe, lock one immutable blueprint per page, inspect the full page plus Q1-Q4 review tiles, enforce mandatory crop contracts, select windows_com_v584 on Windows or mac_python_pptx_v1 on macOS, build locally once, and package only after the backend-specific quality and asset audits pass."
+default_prompt: "Use $standard-report-ppt V6.0.0-rc1 for new projects while preserving V5.9 and V5.8 compatibility. Confirm the exact page count and explicitly ask for deconstruct or bitmap construction before content production. Both modes require builtin ImageGen and one immutable blueprint per page. Use windows_com_v584 on Windows or mac_python_pptx_v2 on macOS; never switch modes automatically; package only after the mode-specific audit passes."
 policy:
   allow_implicit_invocation: true

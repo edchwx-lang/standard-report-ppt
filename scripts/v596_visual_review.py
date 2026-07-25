@@ -110,6 +110,11 @@ def validate_review_tiles(
         return [f"visual_review_tiles.json is unreadable: {exc}"]
     manifest_hash = sha256_file(manifest_path)
     errors: list[str] = []
+    strict_v6 = (
+        manifest.get("schema_version") == "6.0"
+        and manifest.get("pipeline_revision") == "6.0.0"
+        and manifest.get("construction_mode") == "deconstruct"
+    )
     alignment_pages = alignment.get("pages", {})
     manifest_pages = manifest.get("pages", {})
     if not isinstance(alignment_pages, dict) or not isinstance(manifest_pages, dict):
@@ -142,6 +147,71 @@ def validate_review_tiles(
             or review.get("blueprint_sha256") != blueprint_hash
         ):
             errors.append(f"{slide_id}: visual review is not bound to the tile manifest")
+        if strict_v6:
+            reviewed_tile_ids = review.get("reviewed_tile_ids")
+            tile_subjects = review.get("tile_subjects")
+            if review.get("full_page_reviewed") is not True:
+                errors.append(f"{slide_id}: full-page review is not complete")
+            if (
+                not isinstance(reviewed_tile_ids, list)
+                or set(reviewed_tile_ids) != {"Q1", "Q2", "Q3", "Q4"}
+                or len(reviewed_tile_ids) != 4
+            ):
+                errors.append(f"{slide_id}: reviewed tile set must be Q1-Q4")
+            valid_index = (
+                isinstance(tile_subjects, dict)
+                and set(tile_subjects) == {"Q1", "Q2", "Q3", "Q4"}
+            )
+            indexed_ids: set[str] = set()
+            if valid_index:
+                for subject_ids in tile_subjects.values():
+                    if not isinstance(subject_ids, list) or not all(
+                        isinstance(subject_id, str) and subject_id
+                        for subject_id in subject_ids
+                    ) or len(subject_ids) != len(set(subject_ids)):
+                        valid_index = False
+                        break
+                    indexed_ids.update(subject_ids)
+            visuals = page.get("visuals")
+            valid_visuals = isinstance(visuals, list) and all(
+                isinstance(visual, dict) for visual in visuals
+            )
+            visual_ids = (
+                {
+                    str(visual.get("visual_id"))
+                    for visual in visuals
+                    if visual.get("visual_id")
+                }
+                if valid_visuals
+                else set()
+            )
+            if (
+                not valid_index
+                or not valid_visuals
+                or len(visual_ids) != len(visuals)
+                or indexed_ids != visual_ids
+            ):
+                errors.append(
+                    f"{slide_id}: quadrant subject index must equal the visual inventory"
+                )
+            elif isinstance(tile_subjects, dict):
+                for visual in visuals:
+                    visual_id = str(visual["visual_id"])
+                    memberships = visual.get("review_tile_ids")
+                    expected_memberships = {
+                        tile_id
+                        for tile_id, subject_ids in tile_subjects.items()
+                        if visual_id in subject_ids
+                    }
+                    if (
+                        not isinstance(memberships, list)
+                        or not memberships
+                        or len(memberships) != len(set(memberships))
+                        or set(memberships) != expected_memberships
+                    ):
+                        errors.append(
+                            f"{slide_id}/{visual_id}: exact quadrant membership is required"
+                        )
         tiles = record.get("tiles")
         tile_ids: set[str] = set()
         if not isinstance(tiles, list):

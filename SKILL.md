@@ -3,9 +3,58 @@ name: standard-report-ppt
 description: Use when Codex needs to create, revise, reconstruct, or automate a company fixed-template consulting PowerPoint deck from documents, notes, data, an existing PPTX, or visual references.
 ---
 
-# Standard Report PPT V5.9.6
+# Standard Report PPT V6.0.0-rc1
 
-New projects use `pipeline_revision: "5.9.6"` while V5.9.0, V5.9.1, V5.9.2,
+V6 新项目在页数门禁后必须显式选择一种生产方式；两种方式都必须完成内容解析、逐页 ImageGen 和正式蓝图锁定。单独说“蓝图模式”不是有效选择，ImageGen 不可调用时以 `IMAGEGEN_UNAVAILABLE` 停止。
+
+1. `解构模式（较慢）：逐页拆解蓝图并重建为可编辑 PPT；复杂非原生视觉可保留为局部位图。`
+2. `位图模式（较快）：章节、标题、核心判断、来源和页码可编辑；主体蓝图裁切后作为不可编辑图片放入。`
+
+V6 项目合同：
+
+```json
+{
+  "schema_version": "6.0",
+  "pipeline_revision": "6.0.0",
+  "requested_page_count": 9,
+  "production_mode": "blueprint",
+  "construction_mode": "deconstruct",
+  "blueprint_engine": "builtin_imagegen",
+  "platform_target": "auto",
+  "source_files": ["C:/absolute/path/to/source.docx"]
+}
+```
+
+`construction_mode` 必须显式为 `deconstruct` 或 `bitmap`，不设默认值。V6 禁止 `fast`，也禁止两个生产方式互相静默降级。蓝图锁定前的内容、证据、写作、提示词、每页一次成功蓝图和一次无产物传输重试保持不变；`construction_mode` 只进入蓝图锁定后的缓存键。
+
+- Windows 两种方式均使用 `windows_com_v584`。
+- Windows 解构模式完整继承 V5.9.6/V5.8.4 的锁定后蓝图处理，并继续保留 Windows 专属的蓝图对齐审计和渲染后保真报告。
+- macOS 两种方式均使用 `mac_python_pptx_v2`。
+- Windows 与 macOS 解构模式共同强制执行 G0–G3 视觉普查、全页及 Q1–Q4 审查和原子级局部裁切。每个裁切必须是紧边界、无可编辑文字和原生几何的单一独立主体；流程、线条、箭头、图表、表格和基础几何必须反向绑定到 `native` 视觉普查记录；所有解构图片强制无轮廓，裁切像素包含完整深色外围框线时阻断。Mac 继续使用完整解析、原生对象重建和 `DECONSTRUCTION_EDITABILITY_FAILED` 门禁。
+- 位图模式只使用逐页全图审查，`source_px` 必须位于主体外围框线内侧；裁掉固定骨架后以 maximal centered contain 放置一个 `outline: none` 的主体图片，并保留五层骨架文字可编辑。裁切结果形成完整深色外围矩形时以 `V6_BITMAP_BODY_FRAME_INCLUDED` 阻断，只允许修订 `bitmap_alignment.json`。
+- V6 构建器兼容 `core_points` 中历史遗留的前导项目符号，但最终每个核心判断段落必须只显示一个 `■`；重复符号或只有符号没有正文均阻断。
+- V6 `--compile` 会先确定性生成当前模式所需的正式蓝图清单、裁切合同及运行时 page specs；它不调用 ImageGen、不构建、不渲染也不打包。
+- V6 为 RC：Windows 与 OOXML 自动测试是发布门槛；真实 PowerPoint for Mac 的生成、打开、渲染和编辑冒烟测试通过后才标记正式 V6.0.0。
+
+CLI：
+
+```powershell
+python scripts/project_pipeline.py <project> --prepare-visual-review
+python scripts/project_pipeline.py <project> --prepare-bitmap-review
+python scripts/project_pipeline.py <project> --compile
+python scripts/project_pipeline.py <project> --run
+```
+
+V6 post-lock resources are mandatory: `prompts/deconstruction_alignment_prompt.md`,
+`prompts/bitmap_alignment_prompt.md`, `scripts/v6_contracts.py`,
+`scripts/v6_blueprint_gate.py`, `scripts/v6_bitmap.py`,
+`scripts/v6_deconstruction.py`, `scripts/v6_mac_spec.py`,
+`scripts/v6_editability_audit.py`, `scripts/project_compiler_mac_v2.py`, and
+`assets/python_pptx_generator_template_v2.py`.
+
+# Standard Report PPT V5.9.6 compatibility
+
+Existing V5.9.6 projects use `pipeline_revision: "5.9.6"` while V5.9.0, V5.9.1, V5.9.2,
 V5.9.4, and V5.9.5 projects remain readable with their existing behavior. The Windows
 COM and macOS python-pptx backends are unchanged.
 
@@ -211,23 +260,26 @@ If the request has no exact count:
 
 “适量”, “简要”, “几页左右”, “若干页”, and “as needed” are not exact counts.
 
-### Gate 1 — production mode
+### Gate 1 — construction mode
 
-Recognize an explicit user choice:
+V6 new projects always use `production_mode: "blueprint"` and require an explicit
+`construction_mode`. Recognize only these choices:
 
-- `blueprint`: ImageGen, 蓝图还原, 高保真蓝图, or choice `1` after the menu.
-- `fast`: 快速生成, 跳过蓝图, 无 ImageGen, or choice `2` after the menu.
+- `解构 / 可编辑 / 1` → `deconstruct`
+- `位图 / 快速位图 / 2` → `bitmap`
 
 If the mode is absent, show exactly these choices and wait for the user's explicit choice:
 
-1. `ImageGen 蓝图还原（默认推荐）`
-2. `快速生成`
+1. `解构模式（较慢）：逐页拆解蓝图并重建为可编辑 PPT；复杂非原生视觉可保留为局部位图。`
+2. `位图模式（较快）：章节、标题、核心判断、来源和页码可编辑；主体蓝图裁切后作为不可编辑图片放入。`
 
-“默认推荐” is a recommendation, not permission to begin. If ImageGen is unavailable, ask whether to switch to fast mode or stop. Never downgrade silently.
+“蓝图模式”单独出现不是有效选择，因为两个模式都必须生成蓝图。V6 不设默认
+`construction_mode`。ImageGen 不可调用或无权限时立即以
+`IMAGEGEN_UNAVAILABLE` 停止；不得询问或切换到跳过蓝图的生产方式。
 
 ## Two-gate execution contract
 
-After the user has explicitly confirmed the final page count and production mode, begin production immediately. These are the only routine user confirmations in this skill.
+After the user has explicitly confirmed the final page count and construction mode, begin production immediately. These are the only routine user confirmations in this skill.
 
 - Do not ask for design, layout, specification, plan, or implementation approval after both gates pass.
 - Do not invoke generic brainstorming, design-spec approval, writing-plan, branch-finishing, or worktree workflows for normal deck production. This skill owns the complete production workflow.
@@ -371,7 +423,7 @@ Before opening PowerPoint, inspect `.build/layout_precheck.json`. It warns about
 
 After Python production, use one terminal sequence: `project_pipeline.py --run` builds, renders, and writes all audits plus `.build/quality_report.json`; immediately inspect `.build/rendered/current`; then call `pack_delivery.py` once. V5.7 compatibility packaging retains its historical strict behavior. Any change after visual inspection requires one new `--run` before packaging.
 
-## Fast mode
+## V5.9.x fast mode compatibility
 
 Fast mode skips ImageGen and may select deterministic body grids. It starts through `project_pipeline.py --init`, writes UTF-8 content/page manifests, and uses the same compiled COM runtime, skeleton, components, effects cleanup, evidence contract, editability, rendering, text audit, and QA. Reject `?{3,}`, `�`, C1 controls, and common mojibake before PowerPoint opens and again by scanning final PPTX XML.
 

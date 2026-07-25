@@ -42,6 +42,25 @@ SUPPORTED_ELEMENT_TYPES = {
         "flow",
         "matrix",
     },
+    "mac_python_pptx_v2": {
+        "asset",
+        "section_header",
+        "text",
+        "rect",
+        "oval",
+        "line",
+        "arrow",
+        "text_card",
+        "metric_strip",
+        "hbar_chart",
+        "column_chart",
+        "line_chart",
+        "combo_chart",
+        "donut_chart",
+        "grouped_hbar_chart",
+        "flow",
+        "matrix",
+    },
 }
 
 CHART_TYPES = {
@@ -609,6 +628,12 @@ def validate_reconstruction_contract(
     blockers: list[dict] = []
     warnings: list[dict] = []
     alignment_pages = alignment.get("pages", {})
+    v6_strict_deconstruct = (
+        brief.get("schema_version") == "6.0"
+        and brief.get("pipeline_revision") == "6.0.0"
+        and brief.get("construction_mode") == "deconstruct"
+        and backend in {"windows_com_v584", "mac_python_pptx_v2"}
+    )
     supported_types = SUPPORTED_ELEMENT_TYPES.get(backend)
     if supported_types is None:
         blockers.append(
@@ -764,9 +789,14 @@ def validate_reconstruction_contract(
                 )
 
         visuals = page.get("visuals", [])
-        is_v595 = brief.get("pipeline_revision") in {"5.9.5", "5.9.6"}
+        effective_visual_revision = (
+            "5.9.6"
+            if v6_strict_deconstruct
+            else brief.get("pipeline_revision")
+        )
+        is_v595 = effective_visual_revision in {"5.9.5", "5.9.6"}
         census = validate_visual_page(slide_id, {
-            "pipeline_revision": brief.get("pipeline_revision"),
+            "pipeline_revision": effective_visual_revision,
             "visual_reviewed": page.get("reviewed"),
             "visual_review": page.get("visual_review"),
             "visual_census_result": page.get("visual_census_result"),

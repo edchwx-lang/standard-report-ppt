@@ -418,6 +418,300 @@ def _write_py_zip(generator_path: Path, destination: Path) -> None:
         archive.write(generator_path, "generate_deck.py")
 
 
+def _validate_v6_project(
+    project_dir: Path, pptx_path: Path, generator_path: Path
+) -> list[str]:
+    errors: list[str] = []
+    try:
+        brief = json.loads(
+            (project_dir / "project_brief.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return [f"V6 project brief is unreadable: {exc}"]
+    mode = brief.get("construction_mode")
+    if (
+        brief.get("schema_version") != "6.0"
+        or brief.get("pipeline_revision") != "6.0.0"
+        or brief.get("production_mode") != "blueprint"
+        or mode not in {"deconstruct", "bitmap"}
+    ):
+        errors.append("V6 project contract is invalid")
+    runtime_path = project_dir / ".build" / "runtime_report.json"
+    runtime = (
+        json.loads(runtime_path.read_text(encoding="utf-8"))
+        if runtime_path.is_file()
+        else {}
+    )
+    if runtime.get("builder_backend") not in {
+        "windows_com_v584",
+        "mac_python_pptx_v2",
+    }:
+        errors.append("V6 builder_backend is missing or invalid")
+    if runtime.get("construction_mode") != mode:
+        errors.append("V6 runtime construction_mode differs from the brief")
+    result_path = project_dir / ".build" / "pipeline_result.json"
+    result = (
+        json.loads(result_path.read_text(encoding="utf-8"))
+        if result_path.is_file()
+        else {}
+    )
+    if (
+        result.get("schema_version") != "6.0"
+        or result.get("pipeline_revision") != "6.0.0"
+        or result.get("construction_mode") != mode
+        or result.get("builder_backend") != runtime.get("builder_backend")
+        or result.get("ok") is not True
+    ):
+        errors.append("V6 pipeline_result metadata is missing or invalid")
+    audit_name = (
+        "deconstruction_editability_audit.json"
+        if mode == "deconstruct"
+        else "bitmap_pptx_audit.json"
+    )
+    audit_path = project_dir / ".build" / audit_name
+    audit = (
+        json.loads(audit_path.read_text(encoding="utf-8"))
+        if audit_path.is_file()
+        else {}
+    )
+    if (
+        audit.get("ok") is not True
+        or audit.get("status") != "pass"
+        or audit.get("construction_mode") != mode
+        or audit.get("builder_backend") != runtime.get("builder_backend")
+        or audit.get("pptx_sha256") != sha256_file(pptx_path)
+    ):
+        errors.append(f"V6 mode-specific audit did not pass: {audit_name}")
+    if mode == "deconstruct":
+        precheck_path = project_dir / ".build" / "deconstruction_precheck.json"
+        precheck = (
+            json.loads(precheck_path.read_text(encoding="utf-8"))
+            if precheck_path.is_file()
+            else {}
+        )
+        if precheck.get("ok") is not True:
+            errors.append("V6 deconstruction precheck did not pass")
+    lock_path = project_dir / ".build" / "formal_blueprint_manifest.json"
+    if not lock_path.is_file():
+        errors.append("V6 formal_blueprint_manifest.json is missing")
+    else:
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        expected_ids = {
+            f"S{index:02d}"
+            for index in range(1, int(brief.get("requested_page_count", 0)) + 1)
+        }
+        if (
+            lock.get("schema_version") != "6.0"
+            or lock.get("pipeline_revision") != "6.0.0"
+            or lock.get("construction_mode") != mode
+            or not isinstance(lock.get("pages"), dict)
+            or set(lock["pages"]) != expected_ids
+        ):
+            errors.append("V6 formal blueprint lock header or page set is invalid")
+        else:
+            for slide_id in sorted(expected_ids):
+                record = lock["pages"].get(slide_id, {})
+                path = project_dir / "blueprints" / f"{slide_id}.png"
+                if (
+                    record.get("formal_blueprint_path")
+                    != f"blueprints/{slide_id}.png"
+                    or not path.is_file()
+                    or record.get("formal_blueprint_sha256") != sha256_file(path)
+                ):
+                    errors.append(f"{slide_id}: V6 formal blueprint lock is stale")
+    if mode == "bitmap":
+        contract_path = project_dir / ".build" / "bitmap_contract.json"
+        if not contract_path.is_file():
+            errors.append("V6 bitmap_contract.json is missing")
+        else:
+            contract = json.loads(contract_path.read_text(encoding="utf-8"))
+            if (
+                contract.get("schema_version") != "6.0"
+                or contract.get("pipeline_revision") != "6.0.0"
+                or contract.get("construction_mode") != "bitmap"
+            ):
+                errors.append("V6 bitmap_contract.json header is invalid")
+            elif (
+                not isinstance(contract.get("pages"), dict)
+                or set(contract["pages"])
+                != {
+                    f"S{index:02d}"
+                    for index in range(
+                        1, int(brief.get("requested_page_count", 0)) + 1
+                    )
+                }
+            ):
+                errors.append("V6 bitmap_contract.json pages are invalid")
+            else:
+                for slide_id, record in contract["pages"].items():
+                    if not isinstance(record, dict):
+                        errors.append(f"{slide_id}: V6 bitmap contract is invalid")
+                        continue
+                    asset_id = record.get("asset_id")
+                    expected = f".build/assets/{slide_id}/{asset_id}.png"
+                    path = project_dir / expected
+                    if (
+                        not isinstance(asset_id, str)
+                        or record.get("asset_path") != expected
+                        or not path.is_file()
+                        or record.get("asset_sha256") != sha256_file(path)
+                    ):
+                        errors.append(f"{slide_id}: V6 bitmap asset lock is stale")
+    if not pptx_path.is_file():
+        errors.append("V6 PPTX is missing")
+    if generator_path.parent != project_dir or generator_path.name != "generate_deck.py":
+        errors.append("V6 generator must be <project>/generate_deck.py")
+    compile_path = project_dir / ".build" / "compile_report.json"
+    compile_report = (
+        json.loads(compile_path.read_text(encoding="utf-8"))
+        if compile_path.is_file()
+        else {}
+    )
+    if (
+        compile_report.get("schema_version") != "6.0"
+        or compile_report.get("pipeline_revision") != "6.0.0"
+        or compile_report.get("construction_mode") != mode
+        or compile_report.get("builder_backend") != runtime.get("builder_backend")
+        or compile_report.get("generator") != "generate_deck.py"
+        or not generator_path.is_file()
+        or compile_report.get("generator_sha256") != sha256_file(generator_path)
+    ):
+        errors.append("V6 generator does not match compile_report.json")
+    try:
+        compiler_path = Path(__file__).with_name("project_compiler.py")
+        spec = importlib.util.spec_from_file_location(
+            "standard_report_v6_delivery_provenance", compiler_path
+        )
+        compiler = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(compiler)
+        expected = [
+            f"S{index:02d}"
+            for index in range(1, int(brief.get("requested_page_count", 0)) + 1)
+        ]
+        blueprints = compiler._validate_v6_blueprint_chain(
+            project_dir, brief, expected
+        )
+        specs_name = (
+            "page_specs.json"
+            if mode == "deconstruct"
+            else "bitmap_page_specs.json"
+        )
+        page_specs = json.loads(
+            (project_dir / ".build" / specs_name).read_text(encoding="utf-8")
+        )
+        if set(page_specs) != set(expected):
+            raise ValueError("V6 page spec set is invalid")
+        if mode == "deconstruct":
+            visual = json.loads(
+                (project_dir / ".build" / "visual_manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            compiler._validate_v6_deconstruct_assets(
+                project_dir, expected, page_specs, visual
+            )
+        else:
+            compiler._validate_v6_bitmap_assets(
+                project_dir, expected, page_specs, blueprints
+            )
+    except Exception as exc:
+        errors.append(f"V6 provenance/asset derivation validation failed: {exc}")
+    return errors
+
+
+def package_v6_delivery(
+    project_dir: str | Path,
+    pptx_path: str | Path,
+    generator_path: str | Path,
+    output_zip: str | Path,
+) -> Path:
+    """Package a V6 result as exactly PPTX, blueprints.zip, and py.zip."""
+
+    project = Path(project_dir).resolve()
+    pptx = Path(pptx_path).resolve()
+    generator = Path(generator_path).resolve()
+    output = Path(output_zip).resolve()
+    errors = _validate_v6_project(project, pptx, generator)
+    if errors:
+        raise ValueError("V6 delivery validation failed:\n- " + "\n- ".join(errors))
+    brief = json.loads((project / "project_brief.json").read_text(encoding="utf-8"))
+    mode = str(brief["construction_mode"])
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".ppt_v6_delivery_", dir=output.parent) as tmp:
+        temporary = Path(tmp)
+        py_zip = temporary / "py.zip"
+        blueprints_zip = temporary / "blueprints.zip"
+        bundle = temporary / output.name
+        _write_py_zip(generator, py_zip)
+        with ZipFile(blueprints_zip, "w", ZIP_DEFLATED) as archive:
+            for path in sorted((project / "blueprints").glob("S[0-9][0-9].png")):
+                archive.write(path, f"blueprints/{path.name}")
+            lock_path = project / ".build" / "formal_blueprint_manifest.json"
+            if lock_path.is_file():
+                archive.write(lock_path, "formal_blueprint_manifest.json")
+            if mode == "deconstruct":
+                manifest_path = project / ".build" / "visual_manifest.json"
+                if manifest_path.is_file():
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    for slide_id, page in manifest.get("pages", {}).items():
+                        if not isinstance(page, dict):
+                            continue
+                        for visual in page.get("visuals", []):
+                            if (
+                                not isinstance(visual, dict)
+                                or visual.get(
+                                    "treatment", visual.get("disposition")
+                                )
+                                != "crop"
+                            ):
+                                continue
+                            asset_id = visual.get("asset_id")
+                            path = (
+                                project
+                                / ".build"
+                                / "assets"
+                                / str(slide_id)
+                                / f"{asset_id}.png"
+                            )
+                            if isinstance(asset_id, str) and path.is_file():
+                                archive.write(
+                                    path, f"assets/{slide_id}/{asset_id}.png"
+                                )
+            else:
+                contract_path = project / ".build" / "bitmap_contract.json"
+                contract = json.loads(contract_path.read_text(encoding="utf-8"))
+                archive.write(contract_path, "bitmap_contract.json")
+                for record in contract.get("pages", {}).values():
+                    if not isinstance(record, dict):
+                        continue
+                    path = project / str(record.get("asset_path", ""))
+                    if path.is_file():
+                        archive.write(path, f"body/{path.name}")
+        with ZipFile(bundle, "w", ZIP_DEFLATED) as archive:
+            archive.write(pptx, pptx.name)
+            archive.write(blueprints_zip, "blueprints.zip")
+            archive.write(py_zip, "py.zip")
+        verification = verify_delivery_zip(bundle, pptx.name)
+        bundle.replace(output)
+    record = {
+        "schema_version": "6.0",
+        "pipeline_revision": "6.0.0",
+        "construction_mode": mode,
+        "builder_backend": json.loads(
+            (project / ".build" / "runtime_report.json").read_text(encoding="utf-8")
+        )["builder_backend"],
+        "zip_path": str(output),
+        "zip_sha256": sha256_file(output),
+        "pptx_sha256": sha256_file(pptx),
+        "outer_entries": verification["outer_entries"],
+    }
+    (project / ".build" / "delivery_record.json").write_text(
+        json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return output
+
+
 def _validate_direct_project(project_dir: Path) -> list[str]:
     module_path = Path(__file__).resolve().with_name("direct_project.py")
     spec = importlib.util.spec_from_file_location("standard_report_ppt_direct_project_pack", module_path)

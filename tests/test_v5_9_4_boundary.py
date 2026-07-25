@@ -29,8 +29,8 @@ FROZEN_SHA256 = {
     "scripts/compose_blueprint.py":
         "5b313f2ed90b2c08aae212f4ecbcadc2468d04a21afa4ee786acf73b7ef03d65",
 }
-UPSTREAM_SKILL_SECTION_SHA256 = (
-    "09272d75455a097245d247750d58bad6f41072b9bc6f31e4496875734f7559a4"
+V6_UPSTREAM_SKILL_SECTION_SHA256 = (
+    "fafbb1045ae4ab5380bc0299fcb1cccfe1f07b152d3c40a04cedef9cc7cc3633"
 )
 SKILL_SECTION_START = "## Standard Report PPT V5.9.2 lightweight alignment patch"
 SKILL_SECTION_END = "without replacing or repainting the formal blueprint."
@@ -56,12 +56,12 @@ class V594BoundaryTests(unittest.TestCase):
         }
         self.assertEqual(FROZEN_SHA256, actual)
 
-    def test_skill_requirements_through_blueprint_lock_are_unchanged(self):
+    def test_skill_requirements_through_blueprint_lock_match_v6_gate_boundary(self):
         text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
         start = text.index(SKILL_SECTION_START)
         end = text.index(SKILL_SECTION_END, start) + len(SKILL_SECTION_END)
         self.assertEqual(
-            UPSTREAM_SKILL_SECTION_SHA256,
+            V6_UPSTREAM_SKILL_SECTION_SHA256,
             sha256_bytes(text[start:end].encode("utf-8")),
         )
 

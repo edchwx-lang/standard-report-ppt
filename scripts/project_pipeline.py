@@ -4,17 +4,20 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
 import time
+import platform as host_platform
 from pathlib import Path
 from typing import Any, Callable
 
 
 SCHEMA_VERSION = "5.9"
-SUPPORTED_SCHEMA_VERSIONS = {"5.6", "5.7", "5.8", "5.9"}
+SUPPORTED_SCHEMA_VERSIONS = {"5.6", "5.7", "5.8", "5.9", "6.0"}
 LATEST_SKILL_VERSION = "5.9.6"
+_V6_ASSET_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
 
 def _load_module(name: str, path: Path):
@@ -23,6 +26,43 @@ def _load_module(name: str, path: Path):
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def _ingest_project_sources(project_dir: Path, brief: dict, ingest: Any) -> dict:
+    if brief.get("schema_version") != "6.0":
+        return ingest.ingest_project_sources(project_dir)
+
+    original_loader = ingest._load_module
+
+    def v6_compatible_loader(name: str, path: Path):
+        module = original_loader(name, path)
+        if Path(path).name != "v58_source_cache.py":
+            return module
+        original_write = module.write_source_digest
+
+        def write_source_digest(
+            cache_project_dir,
+            sources,
+            parsed_payload,
+            *,
+            schema_version: str = "5.8",
+        ):
+            cache_schema = "5.9" if schema_version == "6.0" else schema_version
+            return original_write(
+                cache_project_dir,
+                sources,
+                parsed_payload,
+                schema_version=cache_schema,
+            )
+
+        module.write_source_digest = write_source_digest
+        return module
+
+    ingest._load_module = v6_compatible_loader
+    try:
+        return ingest.ingest_project_sources(project_dir)
+    finally:
+        ingest._load_module = original_loader
 
 
 def _audit_policy(brief: dict, audit_name: str) -> str:
@@ -130,6 +170,10 @@ def _project_skill_version(project_dir: str | Path) -> str:
             brief = _read_json(brief_path)
         except (OSError, ValueError, json.JSONDecodeError):
             brief = {}
+        if brief.get("schema_version") == "6.0":
+            if brief.get("pipeline_revision") != "6.0.0":
+                raise ValueError("V6 pipeline_revision must be 6.0.0")
+            return "6.0.0-rc1"
         if brief.get("schema_version") == "5.9":
             revision = str(brief.get("pipeline_revision", ""))
             if revision not in {"5.9.0", "5.9.1", "5.9.2", "5.9.4", "5.9.5", "5.9.6"}:
@@ -143,6 +187,36 @@ def _project_skill_version(project_dir: str | Path) -> str:
         if brief.get("schema_version") in {"5.6", "5.7"}:
             return str(brief["schema_version"])
     return SCHEMA_VERSION
+
+
+def select_v6_backend(system_name: str | None = None) -> str:
+    system = system_name or host_platform.system()
+    if system == "Windows":
+        return "windows_com_v584"
+    if system == "Darwin":
+        return "mac_python_pptx_v2"
+    raise RuntimeError(f"{system} is unsupported by Standard Report PPT V6")
+
+
+def v6_page_batches(page_count: int) -> list[list[str]]:
+    """Split long V6 decks into deterministic three-to-five-page recovery batches."""
+    if not isinstance(page_count, int) or page_count <= 0:
+        raise ValueError("requested_page_count must be a positive integer")
+    if page_count <= 5:
+        return [[f"S{index:02d}" for index in range(1, page_count + 1)]]
+    batch_count = (page_count + 4) // 5
+    base, extra = divmod(page_count, batch_count)
+    sizes = [base + (1 if index < extra else 0) for index in range(batch_count)]
+    if any(size < 3 or size > 5 for size in sizes):
+        raise ValueError("V6 recovery batches must contain three to five pages")
+    result: list[list[str]] = []
+    cursor = 1
+    for size in sizes:
+        result.append(
+            [f"S{index:02d}" for index in range(cursor, cursor + size)]
+        )
+        cursor += size
+    return result
 
 
 def _uses_v583_authoring(project_dir: str | Path) -> bool:
@@ -186,6 +260,32 @@ def _ensure_project_runtime(
     *,
     probe_windows_com: bool,
 ) -> dict:
+    if brief.get("schema_version") == "6.0":
+        backend = select_v6_backend()
+        report = {
+            "schema_version": "6.0",
+            "pipeline_revision": "6.0.0",
+            "construction_mode": brief.get("construction_mode"),
+            "os_name": host_platform.system(),
+            "machine": host_platform.machine(),
+            "builder_backend": backend,
+            "supported": True,
+            "reason": None,
+        }
+        _write_json_atomic(project_dir / ".build" / "runtime_report.json", report)
+        if backend == "windows_com_v584" and probe_windows_com:
+            runtime = _load_module(
+                "standard_report_windows_runtime_v6",
+                Path(__file__).with_name("ensure_windows_runtime.py"),
+            )
+            runtime.ensure_windows_runtime(project_dir=project_dir, probe_com=True)
+        elif backend == "mac_python_pptx_v2":
+            runtime = _load_module(
+                "standard_report_macos_runtime_v6",
+                Path(__file__).with_name("ensure_macos_runtime.py"),
+            )
+            runtime.ensure_macos_runtime(project_dir=project_dir)
+        return report
     if brief.get("schema_version") != "5.9":
         runtime = _load_module(
             "standard_report_windows_runtime_legacy",
@@ -253,6 +353,19 @@ def _stage(project_dir: Path, name: str, action: Callable[[], Any]) -> Any:
 
 
 def validate_brief(brief: dict) -> list[str]:
+    if brief.get("schema_version") == "6.0":
+        contracts = _load_module(
+            "standard_report_v6_contracts_pipeline",
+            Path(__file__).with_name("v6_contracts.py"),
+        )
+        errors = contracts.validate_v6_brief(brief)
+        count = brief.get("requested_page_count")
+        if not isinstance(count, int) or count <= 0:
+            errors.append("requested_page_count must be a positive integer")
+        source_files = brief.get("source_files")
+        if not isinstance(source_files, list) or not source_files:
+            errors.append("V6 requires a non-empty source_files list")
+        return errors
     errors: list[str] = []
     if brief.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS:
         errors.append(f"schema_version must be one of {sorted(SUPPORTED_SCHEMA_VERSIONS)}")
@@ -301,6 +414,60 @@ def preflight_project(project_dir: str | Path) -> dict:
     runtime_report = _ensure_project_runtime(
         project_dir, brief, probe_windows_com=True
     )
+    if brief.get("schema_version") == "6.0":
+        required = [
+            skill_dir / "assets" / "company_template.pptx",
+            skill_dir / "assets" / "direct_blueprint_generator_template.py",
+            skill_dir / "assets" / "python_pptx_generator_template_v2.py",
+            skill_dir / "assets" / "vendor" / "fonttools-4.63.0-py3.zip",
+            skill_dir / "prompts" / "deconstruction_alignment_prompt.md",
+            skill_dir / "prompts" / "bitmap_alignment_prompt.md",
+            *[
+                skill_dir / "scripts" / name
+                for name in (
+                    "project_compiler.py",
+                    "project_compiler_mac_v2.py",
+                    "ensure_windows_runtime.py",
+                    "ensure_macos_runtime.py",
+                    "render_slides.py",
+                    "mac_render_slides.py",
+                    "mac_quality.py",
+                    "v6_contracts.py",
+                    "v6_blueprint_gate.py",
+                    "v6_bitmap.py",
+                    "v6_deconstruction.py",
+                    "v6_mac_spec.py",
+                    "v6_editability_audit.py",
+                    "v596_visual_review.py",
+                    "pack_delivery.py",
+                )
+            ],
+        ]
+        missing = [
+            str(path.relative_to(skill_dir)) for path in required if not path.is_file()
+        ]
+        if missing:
+            raise FileNotFoundError(
+                "missing V6 resources: " + ", ".join(missing)
+            )
+        for path in required:
+            if path.suffix == ".py":
+                compile(path.read_text(encoding="utf-8"), str(path), "exec")
+        packager = _load_module(
+            "standard_report_v6_packager_preflight",
+            skill_dir / "scripts" / "pack_delivery.py",
+        )
+        if not hasattr(packager, "package_v6_delivery"):
+            raise RuntimeError("pack_delivery.py does not provide V6 packaging")
+        return {
+            "schema_version": "6.0",
+            "pipeline_revision": "6.0.0",
+            "construction_mode": brief["construction_mode"],
+            "ok": True,
+            "mode": "blueprint",
+            "builder_backend": runtime_report["builder_backend"],
+            "checks": ["brief", "v6_resources", "python_syntax", "runtime"],
+        }
 
     required = [
         skill_dir / "assets" / "company_template.pptx",
@@ -460,7 +627,7 @@ def init_project(project_dir: str | Path) -> dict:
         directories.extend(["blueprints", ".build/raw_blueprints", ".build/design_drafts", ".build/assets"])
     for relative in directories:
         (project_dir / relative).mkdir(parents=True, exist_ok=True)
-    if brief["schema_version"] in {"5.8", "5.9"}:
+    if brief["schema_version"] in {"5.8", "5.9", "6.0"}:
         skill_dir = Path(__file__).resolve().parents[1]
         template_contract = _load_module(
             "standard_report_v58_template_contract_init",
@@ -477,6 +644,7 @@ def init_project(project_dir: str | Path) -> dict:
         "5.9.1",
         "5.9.2",
         "5.9.4",
+        "6.0.0",
     }:
         timing = _load_module(
             "standard_report_v583_timing_init",
@@ -489,7 +657,7 @@ def init_project(project_dir: str | Path) -> dict:
         )
         start = time.time()
         try:
-            ingest_result = ingest.ingest_project_sources(project_dir)
+            ingest_result = _ingest_project_sources(project_dir, brief, ingest)
         except Exception as exc:
             timing.record_stage(
                 project_dir,
@@ -526,6 +694,56 @@ def init_project(project_dir: str | Path) -> dict:
 
 def materialize_project(project_dir: str | Path) -> dict:
     project_dir = Path(project_dir).resolve()
+    brief = _read_json(project_dir / "project_brief.json")
+    if brief.get("schema_version") == "6.0":
+        build = project_dir / ".build"
+        bundle_path = build / "authoring_bundle.json"
+        bundle = _read_json(bundle_path)
+        compatibility_bundle = dict(bundle)
+        compatibility_bundle["schema_version"] = "5.9"
+        authoring = _load_module(
+            "standard_report_v6_shared_authoring",
+            Path(__file__).with_name("v583_authoring.py"),
+        )
+        slides, page_specs, manifest = authoring._validate_bundle(
+            compatibility_bundle
+        )
+        manifest.update(
+            {
+                "schema_version": "6.0",
+                "pipeline_revision": "6.0.0",
+                "construction_mode": brief["construction_mode"],
+            }
+        )
+        slide_ids = [str(slide["slide_id"]) for slide in slides]
+        draft_hashes = authoring._bind_design_drafts(
+            project_dir, manifest, slide_ids
+        )
+        benchmark_module = _load_module(
+            "standard_report_v6_shared_text_benchmark",
+            Path(__file__).with_name("v58_text_benchmark.py"),
+        )
+        benchmark = benchmark_module.make_benchmark(
+            slides, page_specs, draft_hashes, schema_version="5.9"
+        )
+        benchmark["schema_version"] = "6.0"
+        _write_json_atomic(build / "slides.json", slides)
+        _write_json_atomic(build / "page_specs.json", page_specs)
+        _write_json_atomic(build / "visual_manifest.json", manifest)
+        _write_json_atomic(build / "blueprint_text_benchmark.json", benchmark)
+        result = {
+            "schema_version": "6.0",
+            "pipeline_revision": "6.0.0",
+            "skill_version": "6.0.0-rc1",
+            "ok": True,
+            "authoring_bundle_sha256": _sha256_file(bundle_path),
+            "design_draft_hashes": draft_hashes,
+            "slides": len(slides),
+            "bound_design_drafts": sum(bool(value) for value in draft_hashes.values()),
+            "shared_pre_blueprint_algorithm": "v583_authoring",
+        }
+        _write_json_atomic(build / "authoring_report.json", result)
+        return result
     if not _uses_v583_authoring(project_dir):
         return {"schema_version": _project_schema_version(project_dir), "ok": True, "compatibility": True}
     authoring = _load_module(
@@ -567,6 +785,23 @@ def materialize_project(project_dir: str | Path) -> dict:
 def prepare_visual_review(project_dir: str | Path) -> dict:
     project = Path(project_dir).resolve()
     brief = _read_json(project / "project_brief.json")
+    if brief.get("schema_version") == "6.0":
+        if (
+            brief.get("pipeline_revision") != "6.0.0"
+            or brief.get("construction_mode") != "deconstruct"
+        ):
+            raise ValueError("--prepare-visual-review requires V6 deconstruct mode")
+        generator = _load_module(
+            "standard_report_v6_prepare_visual_review",
+            Path(__file__).with_name("v596_visual_review.py"),
+        )
+        result = generator.generate_review_tiles(project)
+        result["schema_version"] = "6.0"
+        result["skill_version"] = "6.0.0-rc1"
+        result["pipeline_revision"] = "6.0.0"
+        result["construction_mode"] = "deconstruct"
+        _write_json_atomic(project / ".build" / "visual_review_tiles.json", result)
+        return result
     if (
         brief.get("schema_version") != "5.9"
         or brief.get("pipeline_revision") != "5.9.6"
@@ -580,6 +815,169 @@ def prepare_visual_review(project_dir: str | Path) -> dict:
         Path(__file__).with_name("v596_visual_review.py"),
     )
     return generator.generate_review_tiles(project)
+
+
+def prepare_bitmap_review(project_dir: str | Path) -> dict:
+    project = Path(project_dir).resolve()
+    brief = _read_json(project / "project_brief.json")
+    if (
+        brief.get("schema_version") != "6.0"
+        or brief.get("pipeline_revision") != "6.0.0"
+        or brief.get("construction_mode") != "bitmap"
+    ):
+        raise ValueError("--prepare-bitmap-review requires V6 bitmap mode")
+    module = _load_module(
+        "standard_report_v6_prepare_bitmap_review",
+        Path(__file__).with_name("v6_bitmap.py"),
+    )
+    return module.prepare_bitmap_review(project)
+
+
+def _materialize_v6_deconstruct_assets(
+    project: Path,
+    alignment_payload: dict[str, Any],
+    *,
+    reuse_slide_ids: set[str] | None = None,
+) -> None:
+    """Crop only reviewed local visual modules; never rasterize the page body."""
+
+    from PIL import Image
+
+    reused = reuse_slide_ids or set()
+    seen: set[str] = set()
+    for slide_id, page in alignment_payload.get("pages", {}).items():
+        if not isinstance(page, dict):
+            continue
+        blueprint = project / "blueprints" / f"{slide_id}.png"
+        for visual in page.get("visuals", []):
+            if (
+                not isinstance(visual, dict)
+                or visual.get("treatment", visual.get("disposition")) != "crop"
+            ):
+                continue
+            asset_id = visual.get("asset_id")
+            source_px = visual.get("source_px")
+            if (
+                not isinstance(asset_id, str)
+                or not _V6_ASSET_ID.fullmatch(asset_id)
+                or not isinstance(source_px, list)
+                or len(source_px) != 4
+                or not all(isinstance(value, int) for value in source_px)
+            ):
+                raise ValueError(f"{slide_id}: reviewed crop contract is invalid")
+            if asset_id in seen:
+                raise ValueError(f"{slide_id}: crop asset_id is reused across pages")
+            seen.add(asset_id)
+            destination = (
+                project / ".build" / "assets" / slide_id / f"{asset_id}.png"
+            ).resolve()
+            expected_parent = (project / ".build" / "assets" / slide_id).resolve()
+            if destination.parent != expected_parent:
+                raise ValueError(f"{slide_id}/{asset_id}: crop path escapes project")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with Image.open(blueprint) as image:
+                left, top, right, bottom = source_px
+                if not (
+                    0 <= left < right <= image.width
+                    and 0 <= top < bottom <= image.height
+                ):
+                    raise ValueError(f"{slide_id}/{asset_id}: crop is outside blueprint")
+                expected = image.crop((left, top, right, bottom)).convert("RGBA")
+                if slide_id in reused and destination.is_file():
+                    with Image.open(destination) as existing:
+                        actual = existing.convert("RGBA")
+                        if (
+                            expected.size == actual.size
+                            and expected.tobytes() == actual.tobytes()
+                        ):
+                            continue
+                expected.save(destination)
+
+
+def _materialize_v6_formal_blueprint_manifest(
+    project: Path, brief: dict[str, Any]
+) -> dict[str, Any]:
+    visual_path = project / ".build" / "visual_manifest.json"
+    visual = _read_json(visual_path) if visual_path.is_file() else {"pages": {}}
+    pages: dict[str, Any] = {}
+    for index in range(1, int(brief["requested_page_count"]) + 1):
+        slide_id = f"S{index:02d}"
+        formal = project / "blueprints" / f"{slide_id}.png"
+        draft = project / ".build" / "design_drafts" / f"{slide_id}.png"
+        if not formal.is_file() or not draft.is_file():
+            raise FileNotFoundError(f"{slide_id}: immutable blueprint pair is missing")
+        digest = _sha256_file(formal)
+        if _sha256_file(draft) != digest:
+            raise ValueError(f"{slide_id}: formal blueprint differs from ImageGen draft")
+        page = visual.get("pages", {}).get(slide_id, {})
+        if (
+            not isinstance(page, dict)
+            or page.get("design_draft_sha256") != digest
+            or page.get("formal_blueprint_sha256") != digest
+            or page.get("formal_blueprint_path") != f"blueprints/{slide_id}.png"
+        ):
+            raise ValueError(f"{slide_id}: visual manifest does not bind blueprint lock")
+        pages[slide_id] = {
+            "design_draft_path": f".build/design_drafts/{slide_id}.png",
+            "design_draft_sha256": digest,
+            "formal_blueprint_path": f"blueprints/{slide_id}.png",
+            "formal_blueprint_sha256": digest,
+        }
+    payload = {
+        "schema_version": "6.0",
+        "pipeline_revision": "6.0.0",
+        "construction_mode": brief["construction_mode"],
+        "pages": pages,
+    }
+    destination = project / ".build" / "formal_blueprint_manifest.json"
+    if destination.is_file():
+        if _read_json(destination) != payload:
+            raise ValueError("BLUEPRINT_LOCK_TAMPERED")
+    else:
+        _write_json_atomic(destination, payload)
+    return payload
+
+
+def _validate_v6_deconstruct_alignment(
+    project: Path,
+    brief: dict[str, Any],
+    alignment: dict[str, Any],
+) -> None:
+    expected = {
+        f"S{index:02d}"
+        for index in range(1, int(brief["requested_page_count"]) + 1)
+    }
+    if (
+        not isinstance(alignment, dict)
+        or alignment.get("schema_version") != "6.0"
+        or alignment.get("pipeline_revision") != "6.0.0"
+        or alignment.get("construction_mode") != "deconstruct"
+        or not isinstance(alignment.get("pages"), dict)
+        or set(alignment["pages"]) != expected
+    ):
+        raise ValueError("V6 deconstruction alignment header or page set is invalid")
+    review_path = project / ".build" / "visual_review_tiles.json"
+    if not review_path.is_file():
+        raise ValueError("V6 deconstruction visual review manifest is missing")
+    review_manifest = _read_json(review_path)
+    if (
+        review_manifest.get("schema_version") != "6.0"
+        or review_manifest.get("skill_version") != "6.0.0-rc1"
+        or review_manifest.get("pipeline_revision") != "6.0.0"
+        or review_manifest.get("construction_mode") != "deconstruct"
+        or not isinstance(review_manifest.get("pages"), dict)
+        or set(review_manifest["pages"]) != expected
+    ):
+        raise ValueError("V6 deconstruction visual review page set is invalid")
+    validator = _load_module(
+        "standard_report_v596_visual_review_v6",
+        Path(__file__).with_name("v596_visual_review.py"),
+    )
+    errors = validator.validate_review_tiles(project, alignment)
+    if errors:
+        raise ValueError(
+            "V6 deconstruction visual review failed: " + "; ".join(errors)
+        )
 
 
 def _materialize_v583_if_present(project_dir: Path) -> None:
@@ -630,11 +1028,38 @@ def _materialize_v583_if_present(project_dir: Path) -> None:
     materialize_project(project_dir)
 
 
-def compile_project(project_dir: str | Path) -> Path:
+def _dispatch_v6_compiler(project_dir: Path, brief: dict[str, Any]) -> Path:
+    runtime_path = project_dir / ".build" / "runtime_report.json"
+    if not runtime_path.is_file():
+        raise RuntimeError("V6 runtime report is missing; run --init first")
+    backend = _read_json(runtime_path).get("builder_backend")
+    if backend == "mac_python_pptx_v2":
+        compiler_path = Path(__file__).with_name("project_compiler_mac_v2.py")
+        module_name = "standard_report_v6_mac_compiler"
+    elif backend == "windows_com_v584":
+        compiler_path = Path(__file__).with_name("project_compiler.py")
+        module_name = "standard_report_v6_windows_compiler"
+    else:
+        raise RuntimeError(f"unsupported or missing V6 builder backend: {backend}")
+    compiler = _load_module(module_name, compiler_path)
+    return _stage(
+        project_dir, "compile", lambda: compiler.compile_project(project_dir)
+    )
+
+
+def compile_project(
+    project_dir: str | Path,
+    *,
+    _v6_post_lock_prepared: bool = False,
+) -> Path:
     project_dir = Path(project_dir).resolve()
     _materialize_v583_if_present(project_dir)
     brief = _read_json(project_dir / "project_brief.json")
     runtime_path = project_dir / ".build" / "runtime_report.json"
+    if brief.get("schema_version") == "6.0":
+        if not _v6_post_lock_prepared:
+            prebuild_project(project_dir)
+        return _dispatch_v6_compiler(project_dir, brief)
     if brief.get("schema_version") != "5.9" and not runtime_path.is_file():
         compiler = _load_module(
             "standard_report_legacy_compiler",
@@ -778,9 +1203,164 @@ def _v596_review_tile_report(
     }
 
 
-def prebuild_project(project_dir: str | Path) -> dict:
+def prebuild_project(
+    project_dir: str | Path,
+    *,
+    reuse_preprocessed_slide_ids: set[str] | None = None,
+) -> dict:
     project_dir = Path(project_dir).resolve()
     brief = _read_json(project_dir / "project_brief.json")
+    if brief.get("schema_version") == "6.0":
+        gate = _load_module(
+            "standard_report_v6_blueprint_gate_prebuild",
+            Path(__file__).with_name("v6_blueprint_gate.py"),
+        )
+        mode = str(brief.get("construction_mode", ""))
+        gate.assert_blueprint_gate(
+            project_dir, require_alignment=mode == "deconstruct"
+        )
+        _materialize_v6_formal_blueprint_manifest(project_dir, brief)
+        runtime = _read_json(project_dir / ".build" / "runtime_report.json")
+        backend = str(runtime.get("builder_backend", ""))
+        if mode == "bitmap":
+            bitmap = _load_module(
+                "standard_report_v6_bitmap_prebuild",
+                Path(__file__).with_name("v6_bitmap.py"),
+            )
+            bitmap.materialize_bitmap_assets(
+                project_dir,
+                reuse_slide_ids=reuse_preprocessed_slide_ids,
+            )
+            report = {
+                "schema_version": "6.0",
+                "pipeline_revision": "6.0.0",
+                "construction_mode": "bitmap",
+                "builder_backend": backend,
+                "ok": True,
+                "status": "pass",
+                "blockers": [],
+            }
+        elif mode == "deconstruct":
+            alignment_payload = _read_json(
+                project_dir / ".build" / "blueprint_alignment.json"
+            )
+            _validate_v6_deconstruct_alignment(
+                project_dir, brief, alignment_payload
+            )
+            pages = alignment_payload.get("pages", {})
+            if not isinstance(pages, dict):
+                raise ValueError("V6 blueprint alignment pages must be a mapping")
+            resolved_specs = {
+                slide_id: page["resolved_page_spec"]
+                for slide_id, page in pages.items()
+                if isinstance(page, dict)
+                and isinstance(page.get("resolved_page_spec"), dict)
+            }
+            expected = {
+                f"S{index:02d}"
+                for index in range(1, int(brief["requested_page_count"]) + 1)
+            }
+            if set(resolved_specs) != expected:
+                raise ValueError("V6 deconstruction alignment is incomplete")
+            slides = _read_json(project_dir / ".build" / "slides.json")
+            visual_manifest = _read_json(
+                project_dir / ".build" / "visual_manifest.json"
+            )
+            merge = _load_module(
+                "standard_report_v6_shared_alignment_merge",
+                Path(__file__).with_name("v584_blueprint_alignment.py"),
+            )
+            by_slide = {
+                str(slide["slide_id"]): slide
+                for slide in slides
+                if isinstance(slide, dict) and slide.get("slide_id")
+            }
+            aligned_slides: list[dict[str, Any]] = []
+            aligned_specs: dict[str, Any] = {}
+            aligned_manifest = dict(visual_manifest)
+            aligned_manifest["schema_version"] = "6.0"
+            aligned_manifest["pipeline_revision"] = "6.0.0"
+            aligned_manifest["construction_mode"] = "deconstruct"
+            aligned_manifest.setdefault("pages", {})
+            for slide_id in sorted(expected):
+                aligned_slide, aligned_spec, aligned_page = merge._merge_page(
+                    by_slide[slide_id],
+                    resolved_specs[slide_id],
+                    aligned_manifest["pages"].get(slide_id, {}),
+                    pages[slide_id],
+                    skill_version="5.9.6",
+                )
+                aligned_slides.append(aligned_slide)
+                aligned_specs[slide_id] = aligned_spec
+                aligned_manifest["pages"][slide_id] = aligned_page
+            slides = aligned_slides
+            resolved_specs = aligned_specs
+            _write_json_atomic(project_dir / ".build" / "slides.json", slides)
+            _write_json_atomic(
+                project_dir / ".build" / "page_specs.json", resolved_specs
+            )
+            _write_json_atomic(
+                project_dir / ".build" / "visual_manifest.json", aligned_manifest
+            )
+            reconstruction = _load_module(
+                "standard_report_v6_reconstruction_contract",
+                Path(__file__).with_name("v591_reconstruction_contract.py"),
+            ).validate_reconstruction_contract(
+                brief, slides, resolved_specs, alignment_payload, backend
+            )
+            alignment_audit = None
+            if backend == "windows_com_v584":
+                alignment_audit = _load_module(
+                    "standard_report_v6_windows_alignment_audit",
+                    Path(__file__).with_name("blueprint_alignment_audit.py"),
+                ).audit_project(project_dir)
+            guard = _load_module(
+                "standard_report_v6_deconstruction_prebuild",
+                Path(__file__).with_name("v6_deconstruction.py"),
+            ).validate_deconstruction_prebuild(
+                brief, resolved_specs, alignment_payload, backend
+            )
+            blockers = list(reconstruction.get("blockers", [])) + list(
+                guard.get("blockers", [])
+            )
+            report = {
+                "schema_version": "6.0",
+                "pipeline_revision": "6.0.0",
+                "construction_mode": "deconstruct",
+                "builder_backend": backend,
+                "ok": not blockers,
+                "status": "blocked" if blockers else "pass",
+                "blockers": blockers,
+                "reconstruction": reconstruction,
+                "deconstruction_guard": guard,
+                "blueprint_alignment_audit": alignment_audit,
+                "allowed_large_visual_assets_by_page": guard.get(
+                    "allowed_large_visual_assets_by_page", {}
+                ),
+            }
+            _write_json_atomic(
+                project_dir / ".build" / "deconstruction_precheck.json", guard
+            )
+            if not blockers:
+                _materialize_v6_deconstruct_assets(
+                    project_dir,
+                    alignment_payload,
+                    reuse_slide_ids=reuse_preprocessed_slide_ids,
+                )
+            if backend == "mac_python_pptx_v2" and not blockers:
+                _load_module(
+                    "standard_report_v6_mac_spec_prebuild",
+                    Path(__file__).with_name("v6_mac_spec.py"),
+                ).materialize_mac_page_specs(project_dir)
+            if blockers:
+                raise ValueError(
+                    "V6 deconstruction prebuild failed: "
+                    + "; ".join(str(item.get("message", item)) for item in blockers)
+                )
+        else:
+            raise ValueError("V6_CONSTRUCTION_MODE_REQUIRED")
+        _write_json_atomic(project_dir / ".build" / "prebuild_report.json", report)
+        return report
     if (
         brief.get("schema_version") == "5.9"
         and brief.get("pipeline_revision") in {"5.9.1", "5.9.2", "5.9.4", "5.9.5", "5.9.6"}
@@ -1093,6 +1673,754 @@ def _package_v595(
     )
 
 
+def _v6_preprocess_batches(
+    project: Path,
+    brief: dict[str, Any],
+    backend: str,
+) -> tuple[dict[str, Any], set[str]]:
+    """Plan resumable post-lock parsing/cropping; PPT construction stays whole-deck."""
+
+    mode = str(brief["construction_mode"])
+    alignment_name = (
+        "blueprint_alignment.json"
+        if mode == "deconstruct"
+        else "bitmap_alignment.json"
+    )
+    alignment = _read_json(project / ".build" / alignment_name)
+    alignment_pages = alignment.get("pages", {})
+    plan_path = project / ".build" / "v6_batch_plan.json"
+    previous = _read_json(plan_path) if plan_path.is_file() else {}
+    prior_batches = {
+        tuple(item.get("slide_ids", [])): item
+        for item in previous.get("batches", [])
+        if isinstance(item, dict)
+    }
+    reusable: set[str] = set()
+    batches: list[dict[str, Any]] = []
+    for index, slide_ids in enumerate(
+        v6_page_batches(int(brief["requested_page_count"])), start=1
+    ):
+        fingerprint_payload = {
+            "schema_version": "6.0",
+            "pipeline_revision": "6.0.0",
+            "construction_mode": mode,
+            "builder_backend": backend,
+            "pages": {
+                slide_id: {
+                    "blueprint_sha256": _sha256_file(
+                        project / "blueprints" / f"{slide_id}.png"
+                    ),
+                    "alignment": alignment_pages.get(slide_id),
+                }
+                for slide_id in slide_ids
+            },
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                fingerprint_payload, ensure_ascii=False, sort_keys=True
+            ).encode("utf-8")
+        ).hexdigest()
+        prior = prior_batches.get(tuple(slide_ids), {})
+        can_reuse = (
+            previous.get("construction_mode") == mode
+            and previous.get("builder_backend") == backend
+            and prior.get("preprocess_status") == "complete"
+            and prior.get("fingerprint_sha256") == fingerprint
+            and _v6_batch_receipt_valid(
+                project,
+                int(prior.get("batch_id", index)),
+                slide_ids,
+                fingerprint,
+            )
+        )
+        if can_reuse:
+            reusable.update(slide_ids)
+        batches.append(
+            {
+                "batch_id": index,
+                "slide_ids": slide_ids,
+                "fingerprint_sha256": fingerprint,
+                "preprocess_status": "reused" if can_reuse else "pending",
+            }
+        )
+    payload = {
+        "schema_version": "6.0",
+        "pipeline_revision": "6.0.0",
+        "construction_mode": mode,
+        "builder_backend": backend,
+        "recovery_scope": "post_lock_preprocess_only",
+        "whole_deck_build_batched": False,
+        "whole_deck_build_status": "pending",
+        "batches": batches,
+    }
+    _write_json_atomic(plan_path, payload)
+    return payload, reusable
+
+
+def _v6_batch_receipt_path(project: Path, batch_id: int) -> Path:
+    return (
+        project
+        / ".build"
+        / "v6_preprocess_batches"
+        / f"batch_{batch_id:02d}.json"
+    )
+
+
+def _v6_batch_receipt_valid(
+    project: Path,
+    batch_id: int,
+    slide_ids: list[str],
+    fingerprint: str,
+) -> bool:
+    path = _v6_batch_receipt_path(project, batch_id)
+    if not path.is_file():
+        return False
+    try:
+        receipt = _read_json(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    if (
+        receipt.get("schema_version") != "6.0"
+        or receipt.get("pipeline_revision") != "6.0.0"
+        or receipt.get("fingerprint_sha256") != fingerprint
+        or receipt.get("slide_ids") != slide_ids
+        or not isinstance(receipt.get("assets"), dict)
+    ):
+        return False
+    for record in receipt["assets"].values():
+        if not isinstance(record, dict):
+            return False
+        relative = record.get("path")
+        if not isinstance(relative, str):
+            return False
+        asset = (project / relative).resolve()
+        try:
+            asset.relative_to(project)
+        except ValueError:
+            return False
+        if not asset.is_file() or record.get("sha256") != _sha256_file(asset):
+            return False
+    return True
+
+
+def _write_v6_batch_receipt(
+    project: Path,
+    brief: dict[str, Any],
+    batch: dict[str, Any],
+    alignment: dict[str, Any],
+) -> None:
+    mode = str(brief["construction_mode"])
+    slide_ids = list(batch["slide_ids"])
+    assets: dict[str, Any] = {}
+    parsed: dict[str, Any] = {}
+    for slide_id in slide_ids:
+        page = alignment["pages"][slide_id]
+        if mode == "deconstruct":
+            parsed[slide_id] = page.get("resolved_page_spec")
+            visuals = [
+                item
+                for item in page.get("visuals", [])
+                if isinstance(item, dict)
+                and item.get("treatment", item.get("disposition")) == "crop"
+            ]
+            asset_ids = [str(item.get("asset_id")) for item in visuals]
+        else:
+            parsed[slide_id] = {"source_px": page.get("source_px")}
+            asset_ids = [f"{slide_id}_BODY_BITMAP"]
+        for asset_id in asset_ids:
+            if not _V6_ASSET_ID.fullmatch(asset_id):
+                raise ValueError(f"{slide_id}: unsafe V6 batch asset_id")
+            relative = f".build/assets/{slide_id}/{asset_id}.png"
+            asset = (project / relative).resolve()
+            if not asset.is_file():
+                raise FileNotFoundError(asset)
+            assets[f"{slide_id}/{asset_id}"] = {
+                "path": relative,
+                "sha256": _sha256_file(asset),
+            }
+    _write_json_atomic(
+        _v6_batch_receipt_path(project, int(batch["batch_id"])),
+        {
+            "schema_version": "6.0",
+            "pipeline_revision": "6.0.0",
+            "construction_mode": mode,
+            "batch_id": int(batch["batch_id"]),
+            "slide_ids": slide_ids,
+            "fingerprint_sha256": batch["fingerprint_sha256"],
+            "parsed_pages": parsed,
+            "assets": assets,
+        },
+    )
+
+
+def _complete_v6_preprocess_batches(
+    project: Path, payload: dict[str, Any]
+) -> None:
+    completed = dict(payload)
+    completed["batches"] = [
+        {**item, "preprocess_status": "complete"}
+        for item in payload.get("batches", [])
+    ]
+    _write_json_atomic(project / ".build" / "v6_batch_plan.json", completed)
+
+
+def _execute_v6_preprocess_batches(
+    project: Path,
+    brief: dict[str, Any],
+    backend: str,
+    payload: dict[str, Any],
+    reusable_slide_ids: set[str],
+) -> set[str]:
+    """Persist each post-lock parsing/cropping batch independently."""
+
+    del backend
+    mode = str(brief["construction_mode"])
+    alignment_name = (
+        "blueprint_alignment.json"
+        if mode == "deconstruct"
+        else "bitmap_alignment.json"
+    )
+    alignment = _read_json(project / ".build" / alignment_name)
+    if mode == "deconstruct":
+        _validate_v6_deconstruct_alignment(project, brief, alignment)
+        bitmap = None
+    else:
+        bitmap = _load_module(
+            "standard_report_v6_bitmap_batch",
+            Path(__file__).with_name("v6_bitmap.py"),
+        )
+    completed = set(reusable_slide_ids)
+    plan_path = project / ".build" / "v6_batch_plan.json"
+    batches = payload.get("batches", [])
+    for index, batch in enumerate(batches):
+        slide_ids = list(batch.get("slide_ids", []))
+        if batch.get("preprocess_status") == "reused":
+            completed.update(slide_ids)
+            continue
+        try:
+            if mode == "deconstruct":
+                subset = {
+                    **alignment,
+                    "pages": {
+                        slide_id: alignment["pages"][slide_id]
+                        for slide_id in slide_ids
+                    },
+                }
+                _materialize_v6_deconstruct_assets(project, subset)
+            else:
+                assert bitmap is not None
+                bitmap.materialize_bitmap_batch_assets(project, slide_ids)
+        except Exception as exc:
+            batches[index] = {
+                **batch,
+                "preprocess_status": "failed",
+                "error": str(exc),
+            }
+            payload["batches"] = batches
+            _write_json_atomic(plan_path, payload)
+            raise
+        _write_v6_batch_receipt(project, brief, batch, alignment)
+        batches[index] = {
+            **batch,
+            "preprocess_status": "complete",
+        }
+        completed.update(slide_ids)
+        payload["batches"] = batches
+        _write_json_atomic(plan_path, payload)
+    return completed
+
+
+def _mark_v6_whole_deck_built(project: Path) -> None:
+    path = project / ".build" / "v6_batch_plan.json"
+    payload = _read_json(path)
+    payload["whole_deck_build_status"] = "built"
+    _write_json_atomic(path, payload)
+
+
+def _v6_repair_contract_snapshot(
+    project: Path,
+    construction_mode: str,
+) -> dict[str, str | None]:
+    mutable_alignment = (
+        ".build/blueprint_alignment.json"
+        if construction_mode == "deconstruct"
+        else ".build/bitmap_alignment.json"
+    )
+    contract_paths = {"project_brief.json", "generate_deck.py"}
+    contract_paths.update(
+        path.relative_to(project).as_posix()
+        for path in (project / ".build").rglob("*.json")
+        if path.name != "v6_build_attempt.json"
+    )
+    contract_paths.discard(mutable_alignment)
+    for pattern in ("blueprints/S[0-9][0-9].png", ".build/design_drafts/S[0-9][0-9].png"):
+        contract_paths.update(
+            path.relative_to(project).as_posix() for path in project.glob(pattern)
+        )
+    snapshot: dict[str, str | None] = {}
+    for relative in sorted(contract_paths):
+        path = project / relative
+        snapshot[relative] = _sha256_file(path) if path.is_file() else None
+    return snapshot
+
+
+def _assert_v6_repair_contract_unchanged(
+    project: Path,
+    construction_mode: str,
+    expected: Any,
+) -> None:
+    if not isinstance(expected, dict):
+        raise ValueError("V6 repair contract snapshot is missing")
+    actual = _v6_repair_contract_snapshot(project, construction_mode)
+    changed = sorted(
+        relative
+        for relative in set(expected) | set(actual)
+        if expected.get(relative) != actual.get(relative)
+    )
+    if changed:
+        raise ValueError(
+            "V6 repair contract changed outside the permitted alignment file: "
+            + ", ".join(changed)
+        )
+
+
+def _resolve_v6_output_path(
+    project_dir: Path,
+    output_path: str | Path | None,
+    construction_mode: str,
+) -> Path:
+    if output_path is not None:
+        return Path(output_path).expanduser().resolve()
+    suffix = "解构版" if construction_mode == "deconstruct" else "位图版"
+    return (
+        project_dir / "output" / f"{project_dir.name}_{suffix}.pptx"
+    ).resolve()
+
+
+def _run_v6_windows_deconstruct_fidelity_audit(
+    project_dir: Path,
+    brief: dict[str, Any],
+) -> dict[str, Any]:
+    """Run the V5.8.4/V5.9.6 blueprint benchmark on the V6 Windows route."""
+
+    fidelity = _load_module(
+        "standard_report_v6_windows_blueprint_fidelity",
+        Path(__file__).with_name("blueprint_fidelity.py"),
+    )
+    pairs = []
+    missing_render_ids = []
+    for index in range(1, int(brief["requested_page_count"]) + 1):
+        slide_id = f"S{index:02d}"
+        blueprint = project_dir / "blueprints" / f"{slide_id}.png"
+        rendered = (
+            project_dir
+            / ".build"
+            / "rendered"
+            / "current"
+            / f"{slide_id}.png"
+        )
+        if not rendered.is_file():
+            missing_render_ids.append(slide_id)
+            continue
+        pairs.append((slide_id, blueprint, rendered))
+    report = fidelity.compare_deck(
+        pairs,
+        expected_page_count=int(brief["requested_page_count"]),
+    )
+    if missing_render_ids:
+        report["missing_render_slide_ids"] = missing_render_ids
+    _write_json_atomic(
+        project_dir / ".build" / "blueprint_fidelity.json",
+        report,
+    )
+    return report
+
+
+def _run_v6_project(
+    project_dir: Path,
+    brief: dict[str, Any],
+    output_path: str | Path | None,
+    *,
+    catastrophic_repair: bool,
+    user_revision: bool,
+    auto_package: bool,
+) -> dict[str, Any]:
+    if user_revision:
+        raise ValueError("V6 user revisions require a new explicit project run")
+    attempt_path = project_dir / ".build" / "v6_build_attempt.json"
+    previous = _read_json(attempt_path) if attempt_path.is_file() else {}
+    previous_count = int(previous.get("attempt_count", 0))
+    if catastrophic_repair:
+        if (
+            previous_count != 1
+            or previous.get("status") != "catastrophic_failed"
+        ):
+            raise ValueError(
+                "V6 repair requires one catastrophic first-attempt failure"
+            )
+        if previous.get("construction_mode") != brief.get("construction_mode"):
+            raise ValueError("V6 repair cannot change construction mode")
+        _assert_v6_repair_contract_unchanged(
+            project_dir,
+            str(brief["construction_mode"]),
+            previous.get("repair_contract_snapshot"),
+        )
+        attempt_count = 2
+    else:
+        if previous_count:
+            raise ValueError(
+                "V6 build is locked; use --repair-catastrophic for its one repair"
+            )
+        attempt_count = 1
+    runtime = _ensure_project_runtime(
+        project_dir, brief, probe_windows_com=False
+    )
+    backend = str(runtime["builder_backend"])
+    mode = str(brief["construction_mode"])
+    if catastrophic_repair:
+        if previous.get("builder_backend") != backend:
+            raise ValueError("V6 repair cannot change builder backend")
+    suffix = "解构版" if mode == "deconstruct" else "位图版"
+    output = _resolve_v6_output_path(project_dir, output_path, mode)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    attempt = {
+        "schema_version": "6.0",
+        "pipeline_revision": "6.0.0",
+        "construction_mode": mode,
+        "builder_backend": backend,
+        "attempt_count": attempt_count,
+        "imagegen_reused": True,
+        "status": "in_progress",
+    }
+    _write_json_atomic(attempt_path, attempt)
+
+    def guarded(stage_name: str, action: Callable[[], Any]) -> Any:
+        try:
+            return action()
+        except Exception as exc:
+            failed = dict(attempt)
+            failed.update(
+                {
+                    "status": "catastrophic_failed",
+                    "failed_stage": stage_name,
+                    "error": str(exc),
+                    "repair_contract_snapshot": _v6_repair_contract_snapshot(
+                        project_dir, mode
+                    ),
+                }
+            )
+            _write_json_atomic(attempt_path, failed)
+            raise
+
+    batch_plan, reusable_slides = guarded(
+        "preprocess_plan",
+        lambda: _v6_preprocess_batches(project_dir, brief, backend),
+    )
+    preprocessed_slides = guarded(
+        "preprocess_batches",
+        lambda: _execute_v6_preprocess_batches(
+            project_dir,
+            brief,
+            backend,
+            batch_plan,
+            reusable_slides,
+        ),
+    )
+    guarded(
+        "prebuild_validate",
+        lambda: _stage(
+            project_dir,
+            "prebuild_validate",
+            lambda: prebuild_project(
+                project_dir,
+                reuse_preprocessed_slide_ids=preprocessed_slides,
+            ),
+        ),
+    )
+    generator = guarded(
+        "compile",
+        lambda: compile_project(
+            project_dir,
+            _v6_post_lock_prepared=True,
+        ),
+    )
+    if backend == "windows_com_v584":
+        guarded(
+            "windows_runtime",
+            lambda: _load_module(
+                "standard_report_windows_runtime_v6_build",
+                Path(__file__).with_name("ensure_windows_runtime.py"),
+            ).ensure_windows_runtime(project_dir=project_dir, probe_com=True),
+        )
+    guarded(
+        "build",
+        lambda: _stage(
+            project_dir,
+            "build",
+            lambda: _run(
+                [sys.executable, str(generator), "--output", str(output)],
+                timeout=180,
+            ),
+        ),
+    )
+    guarded("build", lambda: _mark_v6_whole_deck_built(project_dir))
+    if backend == "windows_com_v584":
+        guarded(
+            "render",
+            lambda: _stage(
+                project_dir,
+                "render",
+                lambda: _run(
+                    [
+                        sys.executable,
+                        str(Path(__file__).with_name("render_slides.py")),
+                        str(output),
+                        "--project",
+                        str(project_dir),
+                        "--expected",
+                        str(brief["requested_page_count"]),
+                        "--timeout",
+                        "45",
+                    ],
+                    timeout=180,
+                ),
+            ),
+        )
+        render_result = {
+            "ok": True,
+            "status": "pass",
+            "renderer": "powerpoint_windows",
+            "visual_verification": True,
+        }
+    else:
+        renderer = guarded(
+            "render",
+            lambda: _load_module(
+                "standard_report_v6_macos_render",
+                Path(__file__).with_name("mac_render_slides.py"),
+            ),
+        )
+        render_result = guarded(
+            "render",
+            lambda: _stage(
+                project_dir,
+                "render",
+                lambda: renderer.render_project(
+                    output,
+                    project_dir,
+                    expected_page_count=int(brief["requested_page_count"]),
+                ),
+            ),
+        )
+        mac_quality = guarded(
+            "mac_quality",
+            lambda: _load_module(
+                "standard_report_v6_macos_quality",
+                Path(__file__).with_name("mac_quality.py"),
+            ),
+        )
+        font_path = project_dir / ".build" / "font_report.json"
+        mac_report = guarded(
+            "mac_quality",
+            lambda: mac_quality.audit_mac_pptx(
+                output,
+                expected_page_count=int(brief["requested_page_count"]),
+                render_result=render_result,
+                project_dir=project_dir,
+                font_fallbacks=(
+                    _read_json(font_path).get("fallbacks", [])
+                    if font_path.is_file()
+                    else []
+                ),
+            ),
+        )
+        guarded(
+            "mac_quality",
+            lambda: _write_json_atomic(
+                project_dir / ".build" / "mac_quality_report.json", mac_report
+            ),
+        )
+        if mac_report.get("status") == "blocked":
+            guarded(
+                "mac_quality",
+                lambda: (_ for _ in ()).throw(
+                    ValueError(
+                        "Mac PPTX audit failed: "
+                        + "; ".join(
+                            str(item) for item in mac_report.get("errors", [])
+                        )
+                    )
+                ),
+            )
+    fidelity_report = None
+    if mode == "deconstruct" and backend == "windows_com_v584":
+        fidelity_report = guarded(
+            "blueprint_fidelity",
+            lambda: _run_v6_windows_deconstruct_fidelity_audit(
+                project_dir,
+                brief,
+            ),
+        )
+    audit_module = guarded(
+        "postbuild_audit",
+        lambda: _load_module(
+            "standard_report_v6_postbuild_editability",
+            Path(__file__).with_name("v6_editability_audit.py"),
+        ),
+    )
+    if mode == "deconstruct":
+        precheck = guarded(
+            "postbuild_audit",
+            lambda: _read_json(
+                project_dir / ".build" / "deconstruction_precheck.json"
+            ),
+        )
+        audit = guarded(
+            "postbuild_audit",
+            lambda: audit_module.audit_deconstruction_pptx(
+                output,
+                _read_json(project_dir / ".build" / "page_specs.json"),
+                _read_json(project_dir / ".build" / "blueprint_alignment.json"),
+                allowed_large_visual_assets_by_page=precheck.get(
+                    "allowed_large_visual_assets_by_page", {}
+                ),
+                builder_backend=backend,
+            ),
+        )
+        audit_path = project_dir / ".build" / "deconstruction_editability_audit.json"
+    else:
+        audit = guarded(
+            "postbuild_audit",
+            lambda: audit_module.audit_bitmap_pptx(
+                output,
+                _read_json(project_dir / ".build" / "bitmap_contract.json"),
+                project_dir,
+            ),
+        )
+        audit_path = project_dir / ".build" / "bitmap_pptx_audit.json"
+    guarded(
+        "postbuild_audit",
+        lambda: audit.update(
+            {
+                "pptx_sha256": _sha256_file(output),
+                "construction_mode": mode,
+                "builder_backend": backend,
+            }
+        ),
+    )
+    guarded(
+        "postbuild_audit", lambda: _write_json_atomic(audit_path, audit)
+    )
+    if not audit.get("ok"):
+        guarded(
+            "postbuild_audit",
+            lambda: (_ for _ in ()).throw(
+                ValueError(
+                    "V6 postbuild audit failed: "
+                    + "; ".join(
+                        str(item.get("message", item))
+                        for item in audit.get("blockers", [])
+                    )
+                )
+            ),
+        )
+    contracts = guarded(
+        "finalize",
+        lambda: _load_module(
+            "standard_report_v6_cache_contracts",
+            Path(__file__).with_name("v6_contracts.py"),
+        ),
+    )
+
+    def finalize_cache() -> dict[str, Any]:
+        cache = contracts.post_lock_cache_payload(brief, backend)
+        cache["blueprint_hashes"] = {
+            f"S{index:02d}": _sha256_file(
+                project_dir / "blueprints" / f"S{index:02d}.png"
+            )
+            for index in range(1, int(brief["requested_page_count"]) + 1)
+        }
+        cache["fingerprint_sha256"] = hashlib.sha256(
+            json.dumps(cache, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        _write_json_atomic(
+            project_dir / ".build" / "v6_cache_fingerprint.json", cache
+        )
+        return cache
+
+    cache_payload = guarded("finalize", finalize_cache)
+    result = {
+        "schema_version": "6.0",
+        "pipeline_revision": "6.0.0",
+        "skill_version": "6.0.0-rc1",
+        "production_mode": "blueprint",
+        "construction_mode": mode,
+        "builder_backend": backend,
+        "ok": True,
+        "pptx": str(output),
+        "pptx_sha256": _sha256_file(output),
+        "pages": int(brief["requested_page_count"]),
+        "build_attempt": attempt_count,
+        "postbuild_audit": str(audit_path),
+        "render_status": render_result.get("status"),
+        "blueprint_fidelity": (
+            str(project_dir / ".build" / "blueprint_fidelity.json")
+            if fidelity_report is not None
+            else None
+        ),
+        "visual_verification": bool(render_result.get("visual_verification")),
+    }
+    guarded(
+        "finalize",
+        lambda: _write_json_atomic(
+            project_dir / ".build" / "pipeline_result.json", result
+        ),
+    )
+    successful_attempt = dict(attempt)
+    successful_attempt.update(
+        {
+            "status": "success",
+            "pptx_sha256": result["pptx_sha256"],
+            "postbuild_audit": str(audit_path),
+        }
+    )
+    guarded(
+        "finalize", lambda: _write_json_atomic(attempt_path, successful_attempt)
+    )
+    if (
+        auto_package
+        and render_result.get("status") != "structurally_valid_unrendered"
+    ):
+        packager = _load_module(
+            "standard_report_v6_packager",
+            Path(__file__).with_name("pack_delivery.py"),
+        )
+        delivery = project_dir / "output" / f"{project_dir.name}_{suffix}.zip"
+        result["delivery"] = str(
+            guarded(
+                "package",
+                lambda: packager.package_v6_delivery(
+                    project_dir, output, generator, delivery
+                ),
+            )
+        )
+        guarded(
+            "package",
+            lambda: _write_json_atomic(
+                project_dir / ".build" / "pipeline_result.json", result
+            ),
+        )
+    elif auto_package:
+        result["delivery_blocked_reason"] = "MAC_RENDERER_UNAVAILABLE"
+        guarded(
+            "package",
+            lambda: _write_json_atomic(
+                project_dir / ".build" / "pipeline_result.json", result
+            ),
+        )
+    return result
+
+
 def run_project(
     project_dir: str | Path,
     output_path: str | Path | None = None,
@@ -1106,6 +2434,15 @@ def run_project(
     errors = validate_brief(brief)
     if errors:
         raise ValueError("; ".join(errors))
+    if brief.get("schema_version") == "6.0":
+        return _run_v6_project(
+            project_dir,
+            brief,
+            output_path,
+            catastrophic_repair=catastrophic_repair,
+            user_revision=user_revision,
+            auto_package=auto_package,
+        )
     output = Path(output_path) if output_path else project_dir / "output" / "report.pptx"
     is_v595 = brief.get("pipeline_revision") in {"5.9.5", "5.9.6"}
     release = None
@@ -1549,7 +2886,7 @@ def run_project(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="V5.8 manifest-driven PowerPoint project pipeline.")
+    parser = argparse.ArgumentParser(description="Version-aware Standard Report PPT project pipeline.")
     parser.add_argument("project", type=Path)
     actions = parser.add_mutually_exclusive_group(required=True)
     actions.add_argument("--preflight", action="store_true")
@@ -1557,6 +2894,7 @@ def main() -> None:
     actions.add_argument("--compile", action="store_true")
     actions.add_argument("--materialize", action="store_true")
     actions.add_argument("--prepare-visual-review", action="store_true")
+    actions.add_argument("--prepare-bitmap-review", action="store_true")
     actions.add_argument("--run", action="store_true")
     parser.add_argument("--output", type=Path)
     parser.add_argument(
@@ -1580,11 +2918,16 @@ def main() -> None:
     elif args.init:
         payload = init_project(args.project)
     elif args.compile:
-        payload = {"schema_version": SCHEMA_VERSION, "generator": str(compile_project(args.project))}
+        payload = {
+            "schema_version": _project_schema_version(args.project),
+            "generator": str(compile_project(args.project)),
+        }
     elif args.materialize:
         payload = materialize_project(args.project)
     elif args.prepare_visual_review:
         payload = prepare_visual_review(args.project)
+    elif args.prepare_bitmap_review:
+        payload = prepare_bitmap_review(args.project)
     else:
         payload = run_project(
             args.project,
