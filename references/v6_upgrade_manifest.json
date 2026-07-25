@@ -6,7 +6,7 @@
   "implementation_head": "3b979d37502943e79c701891d3af0e7f6b09aa48",
   "self_hash_excluded": true,
   "files": [
-    {"path":"README.md","change":"modified","before_sha256":"c533fdbc6e2b1b5583cd0a078aad5e1b93053fcb8096b50f26df6e5ab3e9b71b","after_sha256":"56a80ad489dfe6428746359f9b278252c3d54c8fa4ba37a4b242e42c0831b2df"},
+    {"path":"README.md","change":"modified","before_sha256":"c533fdbc6e2b1b5583cd0a078aad5e1b93053fcb8096b50f26df6e5ab3e9b71b","after_sha256":"f085d39a6d6301b67c6b59db8e847318b4cdb3eb150a5827e83b48c2017df5f8"},
     {"path":"SKILL.md","change":"modified","before_sha256":"d339c2f6380d8990dfc05ef81cfe381d957d6dfe004f70c09a32bc888fd7d012","after_sha256":"88b12f927cc44dde61bfd652ec21cb3f26ba6adc7dcbf843b4ab7c7ade290a95"},
     {"path":"agents/openai.yaml","change":"modified","before_sha256":"be114a3fe0706e562dc4ede92302df50a3bf1eb3f0f9c690cea3b93ecb32aceb","after_sha256":"eadda619787117ece8c2ac3eaffb3e7b51ef54a370b6353892447cdaccde4623"},
     {"path":"assets/direct_blueprint_generator_template.py","change":"modified","before_sha256":"cd289a1a0356a51639348177408d9039844507d342e9e50e9e358095f14614b6","after_sha256":"aa4263ad9f794ab5c9a2da1d8e13f65392f1e673ddc31eee14fc2b072ed80fc1"},
