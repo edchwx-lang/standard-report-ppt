@@ -58,6 +58,33 @@ class V6BoundaryTests(unittest.TestCase):
             skill,
         )
 
+    def test_mac_deconstruction_documentation_requires_atomic_reviewed_crops(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        prompt = (ROOT / "prompts" / "deconstruction_alignment_prompt.md").read_text(
+            encoding="utf-8"
+        )
+        backend_contract = (
+            ROOT / "references" / "cross_platform_backend_contract.md"
+        ).read_text(encoding="utf-8")
+        quality_contract = (
+            ROOT / "references" / "ppt_quality_check_rules.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Windows 与 macOS 解构模式", skill)
+        self.assertIn(
+            "For both `windows_com_v584` and `mac_python_pptx_v2` V6 deconstruction",
+            prompt,
+        )
+        self.assertNotIn(
+            "For `windows_com_v584` V6 deconstruction",
+            prompt,
+        )
+        self.assertIn("G0–G3", backend_contract)
+        self.assertIn("complete dark perimeter frame", backend_contract)
+        self.assertIn(
+            "Both V6 deconstruction backends reject non-atomic crops",
+            quality_contract,
+        )
+
     def test_post_lock_cache_is_mode_isolated_but_upstream_is_shared(self):
         spec = importlib.util.spec_from_file_location(
             "v6_contracts_boundary", ROOT / "scripts" / "v6_contracts.py"

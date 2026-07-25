@@ -94,7 +94,7 @@ class V6DeconstructionTests(unittest.TestCase):
         self.assertIn("VISUAL_GRADE_REQUIRES_SUBJECTS", codes)
         self.assertIn("VISUAL_REVIEW_TILES_REQUIRED", codes)
 
-    def test_v6_mac_deconstruct_visual_contract_is_unchanged(self):
+    def test_v6_mac_deconstruct_inherits_v596_visual_census_gate(self):
         slides, specs, reviewed = self._zero_visual_contract()
         report = self.reconstruction.validate_reconstruction_contract(
             brief(),
@@ -104,8 +104,8 @@ class V6DeconstructionTests(unittest.TestCase):
             "mac_python_pptx_v2",
         )
         codes = {item["code"] for item in report["blockers"]}
-        self.assertNotIn("VISUAL_GRADE_REQUIRES_SUBJECTS", codes)
-        self.assertNotIn("VISUAL_REVIEW_TILES_REQUIRED", codes)
+        self.assertIn("VISUAL_GRADE_REQUIRES_SUBJECTS", codes)
+        self.assertIn("VISUAL_REVIEW_TILES_REQUIRED", codes)
 
     def test_non_v6_is_a_passing_noop(self):
         report = self.subject.validate_deconstruction_prebuild({"schema_version": "5.9"}, {}, {}, "windows_com_v584")
@@ -167,7 +167,7 @@ class V6DeconstructionTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertTrue(any("page spec ids must exactly equal alignment page ids" in item["message"] for item in report["blockers"]))
 
-    def test_windows_rejects_composite_crop_mislabeled_as_pure_visual(self):
+    def test_both_deconstruct_backends_reject_composite_crop_mislabeled_as_pure_visual(self):
         specs = {
             "S01": {
                 "elements": [
@@ -200,22 +200,18 @@ class V6DeconstructionTests(unittest.TestCase):
             ],
         )
 
-        report = self.subject.validate_deconstruction_prebuild(
-            brief(), specs, reviewed, "windows_com_v584"
-        )
+        for backend in ("windows_com_v584", "mac_python_pptx_v2"):
+            with self.subTest(backend=backend):
+                report = self.subject.validate_deconstruction_prebuild(
+                    brief(), specs, reviewed, backend
+                )
+                self.assertFalse(report["ok"])
+                self.assertIn(
+                    "DECONSTRUCTION_NON_ATOMIC_CROP_FORBIDDEN",
+                    {item["code"] for item in report["blockers"]},
+                )
 
-        self.assertFalse(report["ok"])
-        self.assertIn(
-            "DECONSTRUCTION_NON_ATOMIC_CROP_FORBIDDEN",
-            {item["code"] for item in report["blockers"]},
-        )
-        self.assertTrue(
-            self.subject.validate_deconstruction_prebuild(
-                brief(), specs, reviewed, "mac_python_pptx_v2"
-            )["ok"]
-        )
-
-    def test_windows_requires_native_visual_census_for_flow(self):
+    def test_both_deconstruct_backends_require_native_visual_census_for_flow(self):
         specs = {
             "S01": {
                 "elements": [
@@ -237,19 +233,20 @@ class V6DeconstructionTests(unittest.TestCase):
             ],
         )
 
-        report = self.subject.validate_deconstruction_prebuild(
-            brief(), specs, reviewed, "windows_com_v584"
-        )
+        for backend in ("windows_com_v584", "mac_python_pptx_v2"):
+            with self.subTest(backend=backend):
+                report = self.subject.validate_deconstruction_prebuild(
+                    brief(), specs, reviewed, backend
+                )
+                self.assertFalse(report["ok"])
+                self.assertTrue(
+                    any(
+                        "native visual census" in item["message"]
+                        for item in report["blockers"]
+                    )
+                )
 
-        self.assertFalse(report["ok"])
-        self.assertTrue(
-            any(
-                "native visual census" in item["message"]
-                for item in report["blockers"]
-            )
-        )
-
-    def test_windows_accepts_atomic_icon_crop_and_reviewed_native_flow(self):
+    def test_both_deconstruct_backends_accept_atomic_icon_crop_and_reviewed_native_flow(self):
         specs = {
             "S01": {
                 "elements": [
@@ -305,11 +302,12 @@ class V6DeconstructionTests(unittest.TestCase):
             ],
         )
 
-        report = self.subject.validate_deconstruction_prebuild(
-            brief(), specs, reviewed, "windows_com_v584"
-        )
-
-        self.assertTrue(report["ok"], report["blockers"])
+        for backend in ("windows_com_v584", "mac_python_pptx_v2"):
+            with self.subTest(backend=backend):
+                report = self.subject.validate_deconstruction_prebuild(
+                    brief(), specs, reviewed, backend
+                )
+                self.assertTrue(report["ok"], report["blockers"])
 
 
 if __name__ == "__main__":

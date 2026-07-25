@@ -16,6 +16,7 @@ ERROR_UNSUPPORTED = "MAC_RECONSTRUCTION_UNSUPPORTED"
 ERROR_CONTRACT = "MAC_V6_CONTRACT_INVALID"
 ERROR_ASSET = "MAC_ASSET_CONTRACT_MISMATCH"
 ERROR_BLUEPRINT = "MAC_BLUEPRINT_HASH_MISMATCH"
+ERROR_BODY_FRAME = "MAC_DECONSTRUCTION_BODY_FRAME_INCLUDED"
 _SAFE_ASSET_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
@@ -286,6 +287,51 @@ def _assert_crop_matches(
         raise ValueError(f"{ERROR_ASSET}: {label} invalid image asset") from exc
 
 
+def _has_complete_perimeter_frame(asset_path: Path) -> bool:
+    """Detect a dark, continuous rectangle touching all four crop edges."""
+    from PIL import Image
+
+    with Image.open(asset_path) as image:
+        rgba = image.convert("RGBA")
+    background = Image.new("RGBA", rgba.size, "white")
+    flattened = Image.alpha_composite(background, rgba).convert("RGB")
+    width, height = flattened.size
+    if width < 8 or height < 8:
+        return False
+    band = min(3, width // 4, height // 4)
+
+    def dark(pixel: tuple[int, int, int]) -> bool:
+        red, green, blue = pixel
+        return (red * 299 + green * 587 + blue * 114) / 1000 <= 150
+
+    def horizontal(y: int) -> float:
+        return sum(
+            dark(flattened.getpixel((x, y))) for x in range(width)
+        ) / width
+
+    def vertical(x: int) -> float:
+        return sum(
+            dark(flattened.getpixel((x, y))) for y in range(height)
+        ) / height
+
+    edges = (
+        max(horizontal(y) for y in range(band)),
+        max(horizontal(height - 1 - y) for y in range(band)),
+        max(vertical(x) for x in range(band)),
+        max(vertical(width - 1 - x) for x in range(band)),
+    )
+    inset = min(max(band + 2, 5), width // 4, height // 4)
+    inner = (
+        horizontal(inset),
+        horizontal(height - 1 - inset),
+        vertical(inset),
+        vertical(width - 1 - inset),
+    )
+    return min(edges) >= 0.90 and all(
+        edge - inside >= 0.30 for edge, inside in zip(edges, inner)
+    )
+
+
 def _deconstruct_assets(
     project: Path, manifest: dict[str, Any], page_specs: dict[str, Any]
 ) -> dict[str, dict[str, Any]]:
@@ -324,6 +370,10 @@ def _deconstruct_assets(
                 visual.get("source_px"),
                 f"{slide_id}/{asset_id}",
             )
+            if _has_complete_perimeter_frame(asset_path):
+                raise ValueError(
+                    f"{ERROR_BODY_FRAME}: {slide_id}/{asset_id}"
+                )
             records[asset_id] = {
                 "slide_id": slide_id,
                 "asset_id": asset_id,

@@ -168,7 +168,10 @@ def audit_deconstruction_pptx(
                 node = any(shape.shape_type == _AUTO_SHAPE for shape in matches)
                 connector = any(shape.shape_type == _LINE for shape in matches)
                 if not node or not connector: blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"{element_id} requires native AutoShape node and connector"))
-            if kind == "asset" and builder_backend == "windows_com_v584":
+            if kind == "asset" and builder_backend in {
+                "windows_com_v584",
+                "mac_python_pptx_v2",
+            }:
                 pictures = [
                     shape for shape in matches if shape.shape_type == _PICTURE
                 ]

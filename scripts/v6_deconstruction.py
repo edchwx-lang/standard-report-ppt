@@ -13,7 +13,7 @@ _ASSET_TYPES = {"asset", "body_asset"}
 _PURE_VISUAL_KINDS = {"map", "photo", "illustration"}
 _SKELETON_ROLES = {"chapter", "title", "core_point", "source", "page_number"}
 _MAC_TYPES = {"asset", "section_header", "text", "rect", "oval", "line", "arrow", "text_card", "metric_strip", "hbar_chart", "column_chart", "line_chart", "combo_chart", "donut_chart", "grouped_hbar_chart", "flow", "matrix"}
-_WINDOWS_NATIVE_VISUAL_KINDS = {
+_NATIVE_VISUAL_KINDS = {
     "rect": {"rect"},
     "oval": {"oval"},
     "line": {"line"},
@@ -48,7 +48,7 @@ def _body_selected_text(page: dict[str, Any], module_id: str) -> list[str]:
     return [item["selected"] for item in decisions if isinstance(item, dict) and item.get("module_id") == module_id and isinstance(item.get("selected"), str) and item["selected"].strip() and item.get("role") not in _SKELETON_ROLES]
 
 
-def _valid_windows_atomic_crop(visual: dict[str, Any]) -> bool:
+def _valid_atomic_crop(visual: dict[str, Any]) -> bool:
     return (
         visual.get("crop_scope") == "independent_subject"
         and visual.get("subject_count") == 1
@@ -119,11 +119,11 @@ def validate_deconstruction_prebuild(brief: dict[str, Any], page_specs: dict[str
                 blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, str(slide_id), f"asset element {element.get('element_id', '?')} must have exactly one valid module binding"))
 
         visuals = [item for item in page.get("visuals", []) if isinstance(item, dict)]
-        if backend == "windows_com_v584":
+        if backend in {"windows_com_v584", "mac_python_pptx_v2"}:
             for visual in visuals:
                 if (
                     visual.get("treatment") == "crop"
-                    and not _valid_windows_atomic_crop(visual)
+                    and not _valid_atomic_crop(visual)
                 ):
                     blockers.append(
                         _issue(
@@ -138,7 +138,7 @@ def validate_deconstruction_prebuild(brief: dict[str, Any], page_specs: dict[str
                     )
             for element in elements:
                 element_id = element.get("element_id")
-                allowed_kinds = _WINDOWS_NATIVE_VISUAL_KINDS.get(
+                allowed_kinds = _NATIVE_VISUAL_KINDS.get(
                     element.get("type")
                 )
                 if not isinstance(element_id, str) or not allowed_kinds:

@@ -36,8 +36,9 @@ Forbid all composite-body shortcuts, including:
 - an asset that contains wording which should be native editable text;
 - a skeleton plus one page-body screenshot.
 
-For `windows_com_v584` V6 deconstruction, the V5.9.6 full-page and Q1–Q4
-review is authoritative. Every cropped visual must additionally record:
+For both `windows_com_v584` and `mac_python_pptx_v2` V6 deconstruction, the
+V5.9.6 G0–G3 full-page and Q1–Q4 review is authoritative. Every cropped visual
+must additionally record:
 
 - `crop_scope: independent_subject`;
 - `subject_count: 1`;
@@ -50,10 +51,10 @@ crop containing a timeline, process connector, chart/table structure, editable
 wording, or more than one independent subject must be split. Record each
 editable visual primitive in the same G0–G3 visual census with
 `treatment: native`, its stable `element_id`, `source_px`, `target_box_in`,
-`review_tile_ids`, and a supported `rebuild_recipe`. Windows prebuild rejects a
+`review_tile_ids`, and a supported `rebuild_recipe`. Deconstruction prebuild rejects a
 native flow, line, arrow, chart, table, rectangle, or oval that has no matching
-native census record. Every Windows deconstruction picture must have no
-outline.
+native census record. Every deconstruction picture must have no outline, and a
+crop whose pixels contain a complete dark perimeter frame must be rejected.
 
 If a structure cannot be expressed by the target backend, return
 `MAC_RECONSTRUCTION_UNSUPPORTED` or the applicable blocking contract error.

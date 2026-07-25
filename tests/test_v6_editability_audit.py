@@ -214,7 +214,7 @@ class V6EditabilityAuditTests(unittest.TestCase):
             self.assertTrue(any("exactly one square bullet" in item for item in messages))
             self.assertTrue(any("picture outline must be none" in item for item in messages))
 
-    def test_windows_deconstruct_audit_rejects_theme_picture_outline(self):
+    def test_both_deconstruct_backends_reject_theme_picture_outline(self):
         with tempfile.TemporaryDirectory() as directory:
             asset = Path(directory) / "icon.png"
             Image.new("RGB", (80, 80), "navy").save(asset)
@@ -242,30 +242,33 @@ class V6EditabilityAuditTests(unittest.TestCase):
                 }
             }
 
-            report = self.subject.audit_deconstruction_pptx(
-                deck,
-                specs,
-                reviewed(),
-                builder_backend="windows_com_v584",
-            )
-
-            self.assertFalse(report["ok"])
-            self.assertTrue(
-                any(
-                    "picture outline must be none" in item["message"]
-                    for item in report["blockers"]
-                )
-            )
+            for backend in ("windows_com_v584", "mac_python_pptx_v2"):
+                with self.subTest(backend=backend):
+                    report = self.subject.audit_deconstruction_pptx(
+                        deck,
+                        specs,
+                        reviewed(),
+                        builder_backend=backend,
+                    )
+                    self.assertFalse(report["ok"])
+                    self.assertTrue(
+                        any(
+                            "picture outline must be none" in item["message"]
+                            for item in report["blockers"]
+                        )
+                    )
             picture.line.fill.background()
             ppt.save(deck)
-            self.assertTrue(
-                self.subject.audit_deconstruction_pptx(
-                    deck,
-                    specs,
-                    reviewed(),
-                    builder_backend="windows_com_v584",
-                )["ok"]
-            )
+            for backend in ("windows_com_v584", "mac_python_pptx_v2"):
+                with self.subTest(backend=f"{backend}_no_outline"):
+                    self.assertTrue(
+                        self.subject.audit_deconstruction_pptx(
+                            deck,
+                            specs,
+                            reviewed(),
+                            builder_backend=backend,
+                        )["ok"]
+                    )
 
     def test_bitmap_audit_rejects_header_and_hash_chain_tampering(self):
         with tempfile.TemporaryDirectory() as directory:

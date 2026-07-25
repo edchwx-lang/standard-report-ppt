@@ -13,6 +13,12 @@ blueprint locking unchanged. After locking, `construction_mode` selects
 Deconstruction must pass both the prebuild composite-body-image prohibition and
 the postbuild native editability audit. Unsupported Mac structures fail with
 `MAC_RECONSTRUCTION_UNSUPPORTED`; they are not replaced by a page-body bitmap.
+Both V6 deconstruction backends require the locked full page plus Q1–Q4 review,
+G0–G3 visual census, atomic crop declarations, and reverse bindings for native
+lines, arrows, flows, charts, tables, rectangles, and ovals. A raster crop must
+contain exactly one tightly bounded non-native subject, no editable text, and no
+native geometry. Mac compilation also rejects a crop containing complete dark perimeter frame,
+and Mac postbuild auditing rejects any picture outline.
 
 Bitmap construction contains exactly one reviewed body image per page. Its
 runtime box uses `SKEL_CORE.left/width`, top `SKEL_CORE.bottom + 0.12in`, and

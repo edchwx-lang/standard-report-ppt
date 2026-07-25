@@ -628,11 +628,11 @@ def validate_reconstruction_contract(
     blockers: list[dict] = []
     warnings: list[dict] = []
     alignment_pages = alignment.get("pages", {})
-    v6_windows_deconstruct = (
+    v6_strict_deconstruct = (
         brief.get("schema_version") == "6.0"
         and brief.get("pipeline_revision") == "6.0.0"
         and brief.get("construction_mode") == "deconstruct"
-        and backend == "windows_com_v584"
+        and backend in {"windows_com_v584", "mac_python_pptx_v2"}
     )
     supported_types = SUPPORTED_ELEMENT_TYPES.get(backend)
     if supported_types is None:
@@ -791,7 +791,7 @@ def validate_reconstruction_contract(
         visuals = page.get("visuals", [])
         effective_visual_revision = (
             "5.9.6"
-            if v6_windows_deconstruct
+            if v6_strict_deconstruct
             else brief.get("pipeline_revision")
         )
         is_v595 = effective_visual_revision in {"5.9.5", "5.9.6"}

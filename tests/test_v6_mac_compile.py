@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.oxml.ns import qn
@@ -870,6 +870,71 @@ class V6MacCompileTests(unittest.TestCase):
                     "^MAC_ASSET_CONTRACT_MISMATCH:",
                 ):
                     compiler.compile_project(project)
+
+    def test_deconstruct_rejects_crop_with_complete_perimeter_frame(self):
+        compiler = load_module(
+            "v6_mac_compiler_crop_frame",
+            ROOT / "scripts" / "project_compiler_mac_v2.py",
+        )
+        project = self._project("deconstruct")
+        blueprint_path = project / "blueprints" / "S01.png"
+        draft_path = project / ".build" / "design_drafts" / "S01.png"
+        image = Image.new("RGB", (1600, 900), "#ddeeff")
+        ImageDraw.Draw(image).rectangle(
+            (100, 100, 499, 299),
+            outline="#111111",
+            width=3,
+        )
+        image.save(blueprint_path)
+        image.save(draft_path)
+        digest = sha256_file(blueprint_path)
+        for manifest_name in (
+            "visual_manifest.json",
+            "formal_blueprint_manifest.json",
+        ):
+            manifest_path = project / ".build" / manifest_name
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            page = manifest["pages"]["S01"]
+            page["design_draft_sha256"] = digest
+            page["formal_blueprint_sha256"] = digest
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        asset_dir = project / ".build" / "assets" / "S01"
+        asset_dir.mkdir(parents=True)
+        with Image.open(blueprint_path) as blueprint:
+            blueprint.crop((100, 100, 500, 300)).save(asset_dir / "A01.png")
+        self._materialize_deconstruct(
+            project,
+            [
+                {
+                    "type": "asset",
+                    "element_id": "FRAME",
+                    "module_id": "visual",
+                    "asset_id": "A01",
+                    "box": [0, 0, 3, 1.5],
+                    "fit": "contain",
+                }
+            ],
+        )
+        visual_path = project / ".build" / "visual_manifest.json"
+        visual = json.loads(visual_path.read_text(encoding="utf-8"))
+        visual["pages"]["S01"]["visuals"] = [
+            {
+                "treatment": "crop",
+                "asset_id": "A01",
+                "kind": "illustration",
+                "source_px": [100, 100, 500, 300],
+                "target_box_in": [0, 0, 3, 1.5],
+                "target_coord_space": "body",
+            }
+        ]
+        visual_path.write_text(json.dumps(visual), encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "^MAC_DECONSTRUCTION_BODY_FRAME_INCLUDED:",
+        ):
+            compiler.compile_project(project)
 
     def test_compiler_rederives_mac_spec_and_checks_materialization_report(self):
         compiler = load_module(
