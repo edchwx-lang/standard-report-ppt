@@ -38,8 +38,8 @@ class V6BoundaryTests(unittest.TestCase):
         self.assertIn("### Latest V6.0.0-rc1 status", readme)
         self.assertIn("Mac 解构模式现已强制执行", readme)
         self.assertIn("Mac deconstruction now enforces", readme)
-        self.assertIn("376 项自动化测试", readme)
-        self.assertIn("376 automated tests", readme)
+        self.assertIn("377 项自动化测试", readme)
+        self.assertIn("377 automated tests", readme)
         self.assertIn("真实 PowerPoint for Mac 冒烟测试尚未完成", readme)
         self.assertIn("real PowerPoint for Mac smoke test remains pending", readme)
 
