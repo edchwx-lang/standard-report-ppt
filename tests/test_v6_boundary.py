@@ -32,6 +32,17 @@ class V6BoundaryTests(unittest.TestCase):
             skill,
         )
 
+    def test_readme_documents_latest_v6_status_in_chinese_and_english(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("### V6.0.0-rc1 最新状态", readme)
+        self.assertIn("### Latest V6.0.0-rc1 status", readme)
+        self.assertIn("Mac 解构模式现已强制执行", readme)
+        self.assertIn("Mac deconstruction now enforces", readme)
+        self.assertIn("376 项自动化测试", readme)
+        self.assertIn("376 automated tests", readme)
+        self.assertIn("真实 PowerPoint for Mac 冒烟测试尚未完成", readme)
+        self.assertIn("real PowerPoint for Mac smoke test remains pending", readme)
+
     def test_v6_intake_has_only_the_construction_mode_gate(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertEqual(1, skill.count("### Gate 1 — construction mode"))

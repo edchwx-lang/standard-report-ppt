@@ -33,6 +33,14 @@ V6 保持蓝图锁定前的内容生产链不变，取消 V6 新项目的快速�
 
 两种方式都必须调用 ImageGen、逐页锁定正式蓝图；ImageGen 不可用时停止，不允许位图模式绕过蓝图，也不允许解构模式自动降级。Windows 使用 `windows_com_v584`，macOS 使用 `mac_python_pptx_v2`。两端解构模式在蓝图锁定后共同执行 G0–G3 视觉普查、全页和 Q1–Q4 审查、原子级局部裁切及图片无轮廓门禁；Mac 另外阻断裁切像素中的完整深色外围框线。
 
+### V6.0.0-rc1 最新状态
+
+- Mac 解构模式现已强制执行 G0–G3 视觉普查、全页和 Q1–Q4 哈希绑定审查，并拒绝包含多主体、可编辑文字或原生几何的大块复合裁切。
+- Windows 与 Mac 解构成品都会审计图片轮廓；Mac 编译器还会阻断裁切 PNG 中已经烘焙进去的完整深色外围框线。
+- 位图模式继续保留五层原生可编辑骨架，每页仅放置一个等比例、无轮廓的主体图片；核心判断每段严格只有一个 `■`。
+- 发布源和本地安装路径已完成 376 项自动化测试；Windows 专属 COM 构建算法与蓝图生成前冻结链路未改变。
+- 当前仍为 RC：真实 PowerPoint for Mac 冒烟测试尚未完成，因此尚未标记正式 `V6.0.0`。
+
 ```mermaid
 flowchart LR
     A[页数门禁] --> B[生产方式门禁]
@@ -244,6 +252,14 @@ Every new V6 project must explicitly select one of these post-blueprint routes:
 Both routes require built-in ImageGen and one immutable blueprint per page.
 Windows uses `windows_com_v584`; macOS uses `mac_python_pptx_v2`. No route may
 silently switch to the other.
+
+### Latest V6.0.0-rc1 status
+
+- Mac deconstruction now enforces the G0–G3 visual census and hash-bound full-page plus Q1–Q4 review, and rejects composite crops containing multiple subjects, editable text, or native geometry.
+- Both deconstruction backends audit picture outlines. The Mac compiler also blocks a complete dark perimeter frame already baked into a cropped PNG.
+- Bitmap construction retains five native editable skeleton layers and inserts exactly one aspect-preserving, outline-free body image per page. Every core-judgment paragraph contains exactly one `■`.
+- The release source and installed skill pass 376 automated tests. The Windows COM construction algorithm and all frozen pre-blueprint stages remain unchanged.
+- This remains an RC: the real PowerPoint for Mac smoke test remains pending, so the release is not yet labeled final `V6.0.0`.
 
 ### V5.9.6 compatibility for existing projects
 
