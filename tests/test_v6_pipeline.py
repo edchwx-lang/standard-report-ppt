@@ -125,6 +125,12 @@ class V6PipelineTests(unittest.TestCase):
             (build / "authoring_bundle.json").write_text(
                 json.dumps(bundle, ensure_ascii=False), encoding="utf-8"
             )
+            GATE.record_artifact(
+                project,
+                "S01",
+                drafts / "S01.png",
+                transport_attempt_count=1,
+            )
 
             result = PIPELINE.materialize_project(project)
 
@@ -149,14 +155,22 @@ class V6PipelineTests(unittest.TestCase):
         value["requested_page_count"] = page_count
         (project / ".build").mkdir()
         (project / "blueprints").mkdir()
+        (project / "project_brief.json").write_text(
+            json.dumps(value), encoding="utf-8"
+        )
         alignment_pages = {}
         for index in range(1, page_count + 1):
             slide_id = f"S{index:02d}"
-            Image.new("RGB", (100, 100), (index, 2, 3)).save(
-                project / "blueprints" / f"{slide_id}.png"
+            source = project / ".build" / f"incoming_{slide_id}.png"
+            Image.new("RGB", (1600, 900), (index, 2, 3)).save(source)
+            GATE.record_artifact(
+                project,
+                slide_id,
+                source,
+                transport_attempt_count=1,
             )
             alignment_pages[slide_id] = {
-                "source_px": [0, 10, 100, 90]
+                "source_px": [0, 90, 1600, 810]
             }
         alignment_name = (
             "blueprint_alignment.json"
@@ -173,9 +187,6 @@ class V6PipelineTests(unittest.TestCase):
                 }
             ),
             encoding="utf-8",
-        )
-        (project / "project_brief.json").write_text(
-            json.dumps(value), encoding="utf-8"
         )
         return value
 
@@ -342,8 +353,14 @@ class V6PipelineTests(unittest.TestCase):
             (project / "project_brief.json").write_text(
                 json.dumps(brief("bitmap")), encoding="utf-8"
             )
-            (project / "blueprints").mkdir()
-            Image.new("RGB", (1600, 900), "white").save(project / "blueprints" / "S01.png")
+            source = project / "source.png"
+            Image.new("RGB", (1600, 900), "white").save(source)
+            GATE.record_artifact(
+                project,
+                "S01",
+                source,
+                transport_attempt_count=1,
+            )
             bitmap = PIPELINE.prepare_bitmap_review(project)
             self.assertEqual("full_page_only", bitmap["review_scope"])
             with self.assertRaises(ValueError):
@@ -630,6 +647,14 @@ class V6PipelineTests(unittest.TestCase):
             (project / ".build" / "runtime_report.json").write_text(
                 json.dumps({"builder_backend": "mac_python_pptx_v2"}), encoding="utf-8"
             )
+            source = project / "source.png"
+            Image.new("RGB", (1600, 900), "white").save(source)
+            GATE.record_artifact(
+                project,
+                "S01",
+                source,
+                transport_attempt_count=1,
+            )
             with (
                 mock.patch.object(PIPELINE, "prebuild_project") as prebuild,
                 mock.patch.object(PIPELINE, "_load_module") as loader,
@@ -637,7 +662,13 @@ class V6PipelineTests(unittest.TestCase):
                 compiler = SimpleNamespace(
                     compile_project=lambda *args, **kwargs: project / "generate_deck.py"
                 )
-                loader.return_value = compiler
+
+                def load_for_compile(name, path):
+                    if "imagegen_gate_compile" in name:
+                        return GATE
+                    return compiler
+
+                loader.side_effect = load_for_compile
                 PIPELINE.compile_project(project)
                 prebuild.assert_called_once_with(project)
                 self.assertTrue(

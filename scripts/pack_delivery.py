@@ -423,6 +423,18 @@ def _validate_v6_project(
 ) -> list[str]:
     errors: list[str] = []
     try:
+        gate_path = Path(__file__).with_name("v6_blueprint_gate.py")
+        spec = importlib.util.spec_from_file_location(
+            "standard_report_v6_imagegen_gate_delivery",
+            gate_path,
+        )
+        gate = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(gate)
+        gate.assert_imagegen_invocation_gate(project_dir)
+    except Exception as exc:
+        errors.append(str(exc))
+    try:
         brief = json.loads(
             (project_dir / "project_brief.json").read_text(encoding="utf-8")
         )

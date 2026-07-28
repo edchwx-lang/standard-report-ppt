@@ -34,6 +34,7 @@ V6 项目合同：
 - 位图模式只使用逐页全图审查，`source_px` 必须位于主体外围框线内侧；裁掉固定骨架后以 maximal centered contain 放置一个 `outline: none` 的主体图片，并保留五层骨架文字可编辑。裁切结果形成完整深色外围矩形时以 `V6_BITMAP_BODY_FRAME_INCLUDED` 阻断，只允许修订 `bitmap_alignment.json`。
 - V6 构建器兼容 `core_points` 中历史遗留的前导项目符号，但最终每个核心判断段落必须只显示一个 `■`；重复符号或只有符号没有正文均阻断。
 - V6 `--compile` 会先确定性生成当前模式所需的正式蓝图清单、裁切合同及运行时 page specs；它不调用 ImageGen、不构建、不渲染也不打包。
+- V6 的 `--materialize`、两类 review、`--compile`、`--run` 和正式交付在进入后蓝图阶段前统一执行 `V6_IMAGEGEN_INVOCATION_REQUIRED` 门禁。每页必须在追加式 `imagegen_transport_report.json.history` 中有且仅有一个成功 ImageGen 事件，并与 design draft、formal blueprint、当前运输状态及视觉清单的 SHA-256 一致。手工放置图片、只填写当前页记录或自写生成脚本均不构成 ImageGen 调用证明；门禁失败时不得写任何后续产物。`--init`、内容解析和现有 ImageGen 生产/记录逻辑保持不变。
 - V6 为 RC：Windows 与 OOXML 自动测试是发布门槛；真实 PowerPoint for Mac 的生成、打开、渲染和编辑冒烟测试通过后才标记正式 V6.0.0。
 
 CLI：

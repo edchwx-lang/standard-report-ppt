@@ -10,6 +10,7 @@ SCHEMA_VERSION = "6.0"
 PIPELINE_REVISION = "6.0.0"
 IMAGEGEN_UNAVAILABLE = "IMAGEGEN_UNAVAILABLE"
 BLUEPRINT_TRANSPORT_FAILED = "BLUEPRINT_TRANSPORT_FAILED"
+IMAGEGEN_INVOCATION_REQUIRED = "V6_IMAGEGEN_INVOCATION_REQUIRED"
 _IMMEDIATE_FAILURES = {"tool_unavailable", "auth_or_policy"}
 
 
@@ -179,6 +180,73 @@ def record_failure(
     return result
 
 
+def diagnose_imagegen_invocation_gate(
+    project_dir: str | Path,
+) -> dict[str, Any]:
+    project = Path(project_dir).resolve()
+    brief = _brief(project)
+    transport_path = project / ".build" / "imagegen_transport_report.json"
+    transport = _read(transport_path) if transport_path.is_file() else {}
+    manifest_path = project / ".build" / "visual_manifest.json"
+    manifest = _read(manifest_path) if manifest_path.is_file() else {}
+    history = transport.get("history", [])
+    if not isinstance(history, list):
+        history = []
+    pages: dict[str, Any] = {}
+    errors: list[str] = []
+    count = int(brief["requested_page_count"])
+    for index in range(1, count + 1):
+        slide_id = f"S{index:02d}"
+        draft = project / ".build" / "design_drafts" / f"{slide_id}.png"
+        formal = project / "blueprints" / f"{slide_id}.png"
+        digest = _load_v59().sha256_file(draft) if draft.is_file() else None
+        page_errors: list[str] = []
+        if digest is None or not formal.is_file():
+            page_errors.append("immutable ImageGen artifact pair is missing")
+        elif _load_v59().sha256_file(formal) != digest:
+            page_errors.append("formal blueprint is not bound to the ImageGen artifact")
+        manifest_page = manifest.get("pages", {}).get(slide_id, {})
+        if (
+            manifest_page.get("design_draft_sha256") != digest
+            or manifest_page.get("formal_blueprint_sha256") != digest
+        ):
+            page_errors.append("visual manifest does not bind the ImageGen artifact")
+        current = transport.get("pages", {}).get(slide_id, {})
+        if (
+            current.get("artifact_received") is not True
+            or current.get("artifact_sha256") != digest
+            or current.get("imagegen_mode") != "builtin"
+            or current.get("imagegen_attempt_count") != 1
+        ):
+            page_errors.append("current ImageGen transport state is not successful")
+        successes = [
+            event
+            for event in history
+            if isinstance(event, dict)
+            and event.get("slide_id") == slide_id
+            and event.get("imagegen_mode") == "builtin"
+            and event.get("imagegen_attempt_count") == 1
+            and event.get("transport_attempt_count") in {1, 2}
+            and event.get("artifact_received") is True
+            and event.get("artifact_sha256") == digest
+            and event.get("failure_class") == "artifact_received"
+        ]
+        if len(successes) != 1:
+            page_errors.append(
+                "exactly one hash-bound ImageGen success history event is required"
+            )
+        pages[slide_id] = {"ok": not page_errors, "errors": page_errors}
+        errors.extend(f"{slide_id}: {message}" for message in page_errors)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "pipeline_revision": PIPELINE_REVISION,
+        "construction_mode": brief["construction_mode"],
+        "ok": not errors,
+        "pages": pages,
+        "errors": errors,
+    }
+
+
 def diagnose_blueprint_gate(
     project_dir: str | Path, *, require_alignment: bool | None = None
 ) -> dict[str, Any]:
@@ -187,6 +255,15 @@ def diagnose_blueprint_gate(
     if require_alignment is None:
         require_alignment = brief["construction_mode"] == "deconstruct"
     result = _load_v59().diagnose_blueprint_gate(project, require_alignment=False)
+    invocation = diagnose_imagegen_invocation_gate(project)
+    for slide_id, invocation_page in invocation["pages"].items():
+        page_result = result["pages"][slide_id]
+        for message in invocation_page["errors"]:
+            tagged = f"{IMAGEGEN_INVOCATION_REQUIRED}: {message}"
+            page_result["errors"].append(tagged)
+            result["errors"].append(f"{slide_id}: {tagged}")
+        page_result["ok"] = not page_result["errors"]
+    result["ok"] = not result["errors"]
     if require_alignment:
         alignment_path = project / ".build" / "blueprint_alignment.json"
         alignment_pages = (
@@ -221,6 +298,18 @@ def diagnose_blueprint_gate(
             "construction_mode": brief["construction_mode"],
         }
     )
+    return result
+
+
+def assert_imagegen_invocation_gate(
+    project_dir: str | Path,
+) -> dict[str, Any]:
+    result = diagnose_imagegen_invocation_gate(project_dir)
+    if not result["ok"]:
+        raise ValueError(
+            f"{IMAGEGEN_INVOCATION_REQUIRED}: "
+            + "; ".join(result["errors"])
+        )
     return result
 
 

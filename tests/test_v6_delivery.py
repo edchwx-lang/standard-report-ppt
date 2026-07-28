@@ -118,6 +118,28 @@ class V6DeliveryTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        imagegen_event = {
+            "slide_id": "S01",
+            "imagegen_mode": "builtin",
+            "imagegen_attempt_count": 1,
+            "transport_attempt_count": 1,
+            "artifact_received": True,
+            "artifact_sha256": digest,
+            "failure_class": "artifact_received",
+            "resumable": True,
+        }
+        (project / ".build" / "imagegen_transport_report.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "6.0",
+                    "pipeline_revision": "6.0.0",
+                    "construction_mode": mode,
+                    "pages": {"S01": imagegen_event},
+                    "history": [imagegen_event],
+                }
+            ),
+            encoding="utf-8",
+        )
         if mode == "bitmap":
             body = project / ".build" / "assets" / "S01" / "S01_BODY_BITMAP.png"
             body.parent.mkdir(parents=True)
@@ -262,6 +284,23 @@ class V6DeliveryTests(unittest.TestCase):
                 b"tampered"
             )
             with self.assertRaisesRegex(ValueError, "provenance"):
+                PACK.package_v6_delivery(
+                    project, pptx, generator, project / "delivery.zip"
+                )
+
+    def test_delivery_rejects_missing_imagegen_success_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            pptx, generator = self.make_project(project, "deconstruct")
+            report_path = project / ".build" / "imagegen_transport_report.json"
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            report["history"] = []
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "V6_IMAGEGEN_INVOCATION_REQUIRED",
+            ):
                 PACK.package_v6_delivery(
                     project, pptx, generator, project / "delivery.zip"
                 )

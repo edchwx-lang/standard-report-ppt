@@ -696,6 +696,11 @@ def materialize_project(project_dir: str | Path) -> dict:
     project_dir = Path(project_dir).resolve()
     brief = _read_json(project_dir / "project_brief.json")
     if brief.get("schema_version") == "6.0":
+        gate = _load_module(
+            "standard_report_v6_imagegen_gate_materialize",
+            Path(__file__).with_name("v6_blueprint_gate.py"),
+        )
+        gate.assert_imagegen_invocation_gate(project_dir)
         build = project_dir / ".build"
         bundle_path = build / "authoring_bundle.json"
         bundle = _read_json(bundle_path)
@@ -791,6 +796,11 @@ def prepare_visual_review(project_dir: str | Path) -> dict:
             or brief.get("construction_mode") != "deconstruct"
         ):
             raise ValueError("--prepare-visual-review requires V6 deconstruct mode")
+        gate = _load_module(
+            "standard_report_v6_imagegen_gate_visual_review",
+            Path(__file__).with_name("v6_blueprint_gate.py"),
+        )
+        gate.assert_imagegen_invocation_gate(project)
         generator = _load_module(
             "standard_report_v6_prepare_visual_review",
             Path(__file__).with_name("v596_visual_review.py"),
@@ -826,6 +836,11 @@ def prepare_bitmap_review(project_dir: str | Path) -> dict:
         or brief.get("construction_mode") != "bitmap"
     ):
         raise ValueError("--prepare-bitmap-review requires V6 bitmap mode")
+    gate = _load_module(
+        "standard_report_v6_imagegen_gate_bitmap_review",
+        Path(__file__).with_name("v6_blueprint_gate.py"),
+    )
+    gate.assert_imagegen_invocation_gate(project)
     module = _load_module(
         "standard_report_v6_prepare_bitmap_review",
         Path(__file__).with_name("v6_bitmap.py"),
@@ -1053,8 +1068,14 @@ def compile_project(
     _v6_post_lock_prepared: bool = False,
 ) -> Path:
     project_dir = Path(project_dir).resolve()
-    _materialize_v583_if_present(project_dir)
     brief = _read_json(project_dir / "project_brief.json")
+    if brief.get("schema_version") == "6.0":
+        gate = _load_module(
+            "standard_report_v6_imagegen_gate_compile",
+            Path(__file__).with_name("v6_blueprint_gate.py"),
+        )
+        gate.assert_imagegen_invocation_gate(project_dir)
+    _materialize_v583_if_present(project_dir)
     runtime_path = project_dir / ".build" / "runtime_report.json"
     if brief.get("schema_version") == "6.0":
         if not _v6_post_lock_prepared:
@@ -2435,6 +2456,11 @@ def run_project(
     if errors:
         raise ValueError("; ".join(errors))
     if brief.get("schema_version") == "6.0":
+        gate = _load_module(
+            "standard_report_v6_imagegen_gate_run",
+            Path(__file__).with_name("v6_blueprint_gate.py"),
+        )
+        gate.assert_imagegen_invocation_gate(project_dir)
         return _run_v6_project(
             project_dir,
             brief,
