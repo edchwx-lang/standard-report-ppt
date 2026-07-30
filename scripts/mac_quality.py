@@ -79,15 +79,28 @@ def _asset_errors(presentation, project: Path) -> list[str]:
     picture_hashes: dict[str, list[str]] = {}
     for slide in presentation.slides:
         for shape in slide.shapes:
-            if shape.name.startswith("ASSET_") and hasattr(shape, "image"):
+            if hasattr(shape, "image"):
                 picture_hashes.setdefault(shape.name, []).append(
                     hashlib.sha256(shape.image.blob).hexdigest()
                 )
     errors: list[str] = []
     for record in payload.get("assets", []):
-        name = str(record.get("shape_name", ""))
+        raw_names = record.get("shape_names")
+        names = (
+            [str(name) for name in raw_names if isinstance(name, str) and name]
+            if isinstance(raw_names, list)
+            else []
+        )
+        if not names:
+            legacy_name = record.get("shape_name")
+            names = [legacy_name] if isinstance(legacy_name, str) and legacy_name else []
+        name = ", ".join(names)
         expected = str(record.get("source_sha256", ""))
-        found = picture_hashes.get(name, [])
+        found = [
+            digest
+            for shape_name in names
+            for digest in picture_hashes.get(shape_name, [])
+        ]
         if len(found) != 1:
             errors.append(f"{name}: expected exactly one embedded picture")
         elif found[0] != expected:

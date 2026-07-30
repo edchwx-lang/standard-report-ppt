@@ -607,6 +607,21 @@ class V6MacCompileTests(unittest.TestCase):
         self.assertEqual("6.0", asset_report["schema_version"])
         self.assertEqual("bitmap", asset_report["construction_mode"])
         self.assertEqual(sha256_file(asset), asset_report["assets"][0]["source_sha256"])
+        quality = load_module(
+            "v6_mac_bitmap_quality", ROOT / "scripts" / "mac_quality.py"
+        )
+        quality_report = quality.audit_mac_pptx(
+            output,
+            expected_page_count=1,
+            render_result={
+                "ok": True,
+                "visual_verification": True,
+                "renderer": "powerpoint_mac",
+            },
+            font_fallbacks=[],
+            project_dir=project,
+        )
+        self.assertTrue(quality_report["ok"], quality_report["errors"])
 
     def test_core_judgment_normalizes_legacy_leading_bullets(self):
         project = self._project("deconstruct")
