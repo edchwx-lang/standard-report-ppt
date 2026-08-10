@@ -24,9 +24,9 @@ class V6BoundaryTests(unittest.TestCase):
         }
         self.assertEqual(MODULE.FROZEN_SHA256, actual)
 
-    def test_gate_copy_and_rc_version_are_documented(self):
+    def test_gate_copy_and_local_patch_version_are_documented(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("Standard Report PPT V6.0.0-rc1", skill)
+        self.assertIn("Standard Report PPT V6.1", skill)
         self.assertIn(
             "解构模式（较慢）：逐页拆解蓝图并重建为可编辑 PPT；复杂非原生视觉可保留为局部位图。",
             skill,
@@ -68,6 +68,24 @@ class V6BoundaryTests(unittest.TestCase):
             "位图模式（较快）：章节、标题、核心判断、来源和页码可编辑；主体蓝图裁切后作为不可编辑图片放入。",
             skill,
         )
+
+    def test_v6_pre_imagegen_prompt_preserves_visual_freedom_cross_platform(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        patch_prompt = (
+            ROOT / "prompts" / "v6_pre_imagegen_freedom_prompt.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("prompts/v6_pre_imagegen_freedom_prompt.md", skill)
+        self.assertIn("Agent-added negative constraints are forbidden", patch_prompt)
+        self.assertIn(
+            "Do not add bans on photos, icons, maps, people, devices, products, or illustrations",
+            patch_prompt,
+        )
+        self.assertIn("Do not force a text-card-only page", patch_prompt)
+        self.assertIn(
+            "The same pre-ImageGen contract applies on Windows and macOS",
+            patch_prompt,
+        )
+        self.assertIn("both `deconstruct` and `bitmap`", patch_prompt)
 
     def test_mac_deconstruction_documentation_requires_atomic_reviewed_crops(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")

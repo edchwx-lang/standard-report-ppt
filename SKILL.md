@@ -3,7 +3,7 @@ name: standard-report-ppt
 description: Use when Codex needs to create, revise, reconstruct, or automate a company fixed-template consulting PowerPoint deck from documents, notes, data, an existing PPTX, or visual references.
 ---
 
-# Standard Report PPT V6.0.0-rc1
+# Standard Report PPT V6.1
 
 V6 新项目在页数门禁后必须显式选择一种生产方式；两种方式都必须完成内容解析、逐页 ImageGen 和正式蓝图锁定。单独说“蓝图模式”不是有效选择，ImageGen 不可调用时以 `IMAGEGEN_UNAVAILABLE` 停止。
 
@@ -31,11 +31,14 @@ V6 项目合同：
 - Windows 解构模式完整继承 V5.9.6/V5.8.4 的锁定后蓝图处理，并继续保留 Windows 专属的蓝图对齐审计和渲染后保真报告。
 - macOS 两种方式均使用 `mac_python_pptx_v2`。
 - Windows 与 macOS 解构模式共同强制执行 G0–G3 视觉普查、全页及 Q1–Q4 审查和原子级局部裁切。每个裁切必须是紧边界、无可编辑文字和原生几何的单一独立主体；流程、线条、箭头、图表、表格和基础几何必须反向绑定到 `native` 视觉普查记录；所有解构图片强制无轮廓，裁切像素包含完整深色外围框线时阻断。Mac 继续使用完整解析、原生对象重建和 `DECONSTRUCTION_EDITABILITY_FAILED` 门禁。
+- V6.0.1 仅增强解构拓扑门禁：连接型结构必须记录锁定蓝图的 `observed_topology`。通用 `flow` 只允许重建真实顺序流程或因果流程；时间轴、环形关系和网络关系被降级为等宽流程卡时，Windows 与 macOS 均在构建前阻断。此补丁不改变内容解析、ImageGen、设计规则、生产步骤、构建后端或交付流程。
+- V6.1 只调整解构模式的构建后验收与停止条件。文字完整、声明截图全部提取并插入、视觉语义和拓扑与锁定蓝图一致、最终渲染有效时，必须立即写入 `.build/deconstruction_acceptance.json`、锁定首次合格 PPTX 并交付。截图覆盖文字、文字容量、间距、对齐、留白和普通保真差异仅作人工调整提示，不得触发自动重构。
+- V6.1 解构模式再次执行 `--run` 时，若验收凭证与 PPTX SHA-256 一致，必须直接复用现有 PPTX 和交付包，不得重新打开 PowerPoint、重新编译、建立“修订版/终版”工程或再次调用 ImageGen。只有文字缺失或乱码、截图缺失、视觉语义/拓扑错误、无效或未验证渲染允许一次定向灾难性修复；第二次失败后停止。位图模式完整保留 V6.0.1 行为。
 - 位图模式只使用逐页全图审查，`source_px` 必须位于主体外围框线内侧；裁掉固定骨架后以 maximal centered contain 放置一个 `outline: none` 的主体图片，并保留五层骨架文字可编辑。裁切结果形成完整深色外围矩形时以 `V6_BITMAP_BODY_FRAME_INCLUDED` 阻断，只允许修订 `bitmap_alignment.json`。
 - V6 构建器兼容 `core_points` 中历史遗留的前导项目符号，但最终每个核心判断段落必须只显示一个 `■`；重复符号或只有符号没有正文均阻断。
 - V6 `--compile` 会先确定性生成当前模式所需的正式蓝图清单、裁切合同及运行时 page specs；它不调用 ImageGen、不构建、不渲染也不打包。
 - V6 的 `--materialize`、两类 review、`--compile`、`--run` 和正式交付在进入后蓝图阶段前统一执行 `V6_IMAGEGEN_INVOCATION_REQUIRED` 门禁。每页必须在追加式 `imagegen_transport_report.json.history` 中有且仅有一个成功 ImageGen 事件，并与 design draft、formal blueprint、当前运输状态及视觉清单的 SHA-256 一致。手工放置图片、只填写当前页记录或自写生成脚本均不构成 ImageGen 调用证明；门禁失败时不得写任何后续产物。`--init`、内容解析和现有 ImageGen 生产/记录逻辑保持不变。
-- V6 为 RC：Windows 与 OOXML 自动测试是发布门槛；真实 PowerPoint for Mac 的生成、打开、渲染和编辑冒烟测试通过后才标记正式 V6.0.0。
+- V6.1 为保持蓝图生成前流程、现有项目合同、缓存键及位图模式不变，`schema_version` 和 `pipeline_revision` 继续使用 `6.0` 与 `6.0.0`；只有解构验收凭证使用 `schema_version: "6.1"`。
 
 CLI：
 
@@ -50,8 +53,15 @@ V6 post-lock resources are mandatory: `prompts/deconstruction_alignment_prompt.m
 `prompts/bitmap_alignment_prompt.md`, `scripts/v6_contracts.py`,
 `scripts/v6_blueprint_gate.py`, `scripts/v6_bitmap.py`,
 `scripts/v6_deconstruction.py`, `scripts/v6_mac_spec.py`,
-`scripts/v6_editability_audit.py`, `scripts/project_compiler_mac_v2.py`, and
+`scripts/v6_editability_audit.py`, `scripts/v61_deconstruction_acceptance.py`,
+`scripts/project_compiler_mac_v2.py`, and
 `assets/python_pptx_generator_template_v2.py`.
+
+V6 pre-ImageGen visual freedom is governed by
+`prompts/v6_pre_imagegen_freedom_prompt.md`. Apply it after canonical authoring and
+before every ImageGen call on both Windows and macOS, for both construction modes.
+It only prevents agent-invented visual bans and text-card fallback; all existing
+report design requirements and every post-lock step remain unchanged.
 
 # Standard Report PPT V5.9.6 compatibility
 
@@ -317,6 +327,7 @@ For new V5.8.4 projects, `source_files` uses the unchanged V5.8.3 exact-path int
 
 - `prompts/page_outline_prompt.md`
 - `prompts/imagegen_blueprint_prompt.md`
+- `prompts/v6_pre_imagegen_freedom_prompt.md` (V6 only)
 - `prompts/python_reconstruction_prompt.md`
 - `prompts/blueprint_alignment_prompt.md`
 - `references/cross_platform_backend_contract.md`
@@ -386,7 +397,7 @@ Execute this path without omission or substitution:
 
 1. Parse once into canonical slide content, `visual_route`, and a non-blocking `visual_brief` containing `primary_expression`, `visual_story`, and `supporting_visuals`.
 2. Choose the visual expression before considering Python convenience: first the conclusion and strongest evidence; then the best chart, annotated structure/subject illustration, visual-node chain, image-text comparison, lookup table, true process, or narrative-with-anchor form; then supporting visuals; only afterward decide how Python will rebuild it.
-3. Before ImageGen, record any planned decorative/supporting visuals in `visual_plan` without a quantity cap. Request one successful ImageGen result per final slide and save it under `.build/design_drafts/SNN.png`. `transport_attempt_count` is 1 normally and may become 2 only when the first network/timeout call produced no artifact. `imagegen_attempt_count` remains 1. Once any image exists, lock it and never regenerate because of text or visual-quality differences.
+3. Before ImageGen, record any planned decorative/supporting visuals in `visual_plan` without a quantity cap. For V6, apply `prompts/v6_pre_imagegen_freedom_prompt.md`: use the positive evidence-selected expression and do not add visual-category bans, fixed card grids, or text-card-only fallback beyond the user's explicit requirements and this skill's existing design rules. Request one successful ImageGen result per final slide and save it under `.build/design_drafts/SNN.png`. `transport_attempt_count` is 1 normally and may become 2 only when the first network/timeout call produced no artifact. `imagegen_attempt_count` remains 1. Once any image exists, lock it and never regenerate because of text or visual-quality differences.
 4. Copy that immutable ImageGen output byte-for-byte to `blueprints/SNN.png`; it is the formal blueprint benchmark. Run `compose_blueprint.py` only to record skeleton/body ROI metadata for reconstruction and cropping, without replacing or repainting the formal blueprint.
 5. Record the pre-blueprint canonical decision and planned geometry once in `.build/authoring_bundle.json`. After the design draft exists, create one reviewed `.build/blueprint_alignment.json` without regenerating the image. It records blueprint display text, factual corrections, resolved page geometry, module topology, and visual treatment.
 6. Route by evidence semantics. Continuous/comparable data uses line, column, bar, combo, or donut charts; technical structure/material composition/device principles use an annotated structure or subject illustration; value-chain relations use visual nodes; object differences use image-text comparison; exact lookup uses tables/matrices; only real steps or causes use flows; prose uses narrative modules with a visual anchor. Matrix, flow, and card grids are never automatic defaults.

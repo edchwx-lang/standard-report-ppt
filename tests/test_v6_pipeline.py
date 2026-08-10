@@ -404,7 +404,7 @@ class V6PipelineTests(unittest.TestCase):
             item["tile_id"] for item in manifest["pages"]["S01"]["tiles"]
         })
         self.assertEqual("6.0", manifest["schema_version"])
-        self.assertEqual("6.0.0-rc1", manifest["skill_version"])
+        self.assertEqual("6.0.1", manifest["skill_version"])
         return alignment, manifest_path
 
     def test_v6_deconstruct_alignment_requires_hash_bound_full_page_and_q1_q4(self):
@@ -877,18 +877,44 @@ class V6PipelineTests(unittest.TestCase):
                 )
             self.assertEqual([["S06", "S07", "S08", "S09"]], seen)
 
-    def test_first_success_locks_the_v6_build(self):
+    def test_first_deconstruct_success_is_reused_without_a_second_build(self):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
             value = self.make_locked_project(project)
             result = self.run_with_fakes(project, value)
             self.assertTrue(result["ok"])
+            self.assertEqual("6.1.0", result["skill_version"])
+            self.assertTrue(
+                Path(result["deconstruction_acceptance"]).is_file()
+            )
             attempt = json.loads(
                 (project / ".build" / "v6_build_attempt.json").read_text(
                     encoding="utf-8"
                 )
             )
             self.assertEqual("success", attempt["status"])
+            cached = self.run_with_fakes(project, value)
+            self.assertTrue(cached["ok"])
+            self.assertTrue(cached["cached"])
+            self.assertEqual(result["pptx_sha256"], cached["pptx_sha256"])
+
+    def test_first_bitmap_success_keeps_the_existing_build_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            value = self.make_locked_project(project, mode="bitmap")
+            (project / ".build" / "v6_build_attempt.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "6.0",
+                        "pipeline_revision": "6.0.0",
+                        "construction_mode": "bitmap",
+                        "builder_backend": "windows_com_v584",
+                        "attempt_count": 1,
+                        "status": "success",
+                    }
+                ),
+                encoding="utf-8",
+            )
             with self.assertRaisesRegex(ValueError, "build is locked"):
                 self.run_with_fakes(project, value)
 

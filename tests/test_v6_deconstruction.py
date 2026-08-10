@@ -288,6 +288,7 @@ class V6DeconstructionTests(unittest.TestCase):
                     "element_id": "FLOW",
                     "kind": "line",
                     "treatment": "native",
+                    "observed_topology": "sequential_flow",
                     "source_px": [220, 540, 1450, 590],
                     "target_box_in": [1.1, 2.9, 10.3, 0.3],
                     "rebuild_recipe": "line_arrow",
@@ -298,6 +299,7 @@ class V6DeconstructionTests(unittest.TestCase):
                     "module_id": "flow",
                     "module_kind": "mixed",
                     "contains_editable_text": True,
+                    "observed_topology": "sequential_flow",
                 }
             ],
         )

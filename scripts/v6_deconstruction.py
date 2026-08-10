@@ -8,6 +8,8 @@ DECONSTRUCTION_BODY_BITMAP_FORBIDDEN = "DECONSTRUCTION_BODY_BITMAP_FORBIDDEN"
 DECONSTRUCTION_NON_ATOMIC_CROP_FORBIDDEN = (
     "DECONSTRUCTION_NON_ATOMIC_CROP_FORBIDDEN"
 )
+DECONSTRUCTION_TOPOLOGY_REQUIRED = "DECONSTRUCTION_TOPOLOGY_REQUIRED"
+DECONSTRUCTION_TOPOLOGY_MISMATCH = "DECONSTRUCTION_TOPOLOGY_MISMATCH"
 MAC_RECONSTRUCTION_UNSUPPORTED = "MAC_RECONSTRUCTION_UNSUPPORTED"
 _ASSET_TYPES = {"asset", "body_asset"}
 _PURE_VISUAL_KINDS = {"map", "photo", "illustration"}
@@ -27,6 +29,10 @@ _NATIVE_VISUAL_KINDS = {
     "grouped_hbar_chart": {"chart"},
     "matrix": {"table"},
 }
+_GENERIC_FLOW_TOPOLOGIES = {"sequential_flow", "causal_flow"}
+_CONNECTED_NON_FLOW_TOPOLOGIES = {"timeline", "cycle", "network"}
+_CONNECTOR_TYPES = {"line", "arrow"}
+_NODE_TYPES = {"asset", "text", "rect", "oval", "text_card"}
 
 
 def _pages(value: Any) -> dict[str, Any]:
@@ -119,6 +125,80 @@ def validate_deconstruction_prebuild(brief: dict[str, Any], page_specs: dict[str
                 blockers.append(_issue(DECONSTRUCTION_BODY_BITMAP_FORBIDDEN, str(slide_id), f"asset element {element.get('element_id', '?')} must have exactly one valid module binding"))
 
         visuals = [item for item in page.get("visuals", []) if isinstance(item, dict)]
+        for binding, bound in bound_modules:
+            module_id = binding.get("module_id")
+            semantics = modules.get(module_id)
+            observed = (
+                semantics.get("observed_topology")
+                if isinstance(semantics, dict)
+                else None
+            )
+            bound_types = {
+                element.get("type")
+                for element in bound
+                if isinstance(element.get("type"), str)
+            }
+            if observed in _CONNECTED_NON_FLOW_TOPOLOGIES:
+                connector_count = sum(
+                    1 for element in bound if element.get("type") in _CONNECTOR_TYPES
+                )
+                node_count = sum(
+                    1 for element in bound if element.get("type") in _NODE_TYPES
+                )
+                if "flow" in bound_types or connector_count < 1 or node_count < 2:
+                    blockers.append(
+                        _issue(
+                            DECONSTRUCTION_TOPOLOGY_MISMATCH,
+                            str(slide_id),
+                            (
+                                f"module {module_id or '?'} declares reviewed topology "
+                                f"{observed!r} but does not bind at least two native "
+                                "nodes or markers plus a native connector"
+                            ),
+                        )
+                    )
+            flow_ids = {
+                element.get("element_id")
+                for element in bound
+                if element.get("type") == "flow"
+                and isinstance(element.get("element_id"), str)
+            }
+            if not flow_ids:
+                continue
+            visual_topologies = {
+                visual.get("observed_topology")
+                for visual in visuals
+                if visual.get("treatment") == "native"
+                and visual.get("element_id") in flow_ids
+                and isinstance(visual.get("observed_topology"), str)
+            }
+            if not isinstance(observed, str) or not observed or not visual_topologies:
+                blockers.append(
+                    _issue(
+                        DECONSTRUCTION_TOPOLOGY_REQUIRED,
+                        str(slide_id),
+                        (
+                            f"generic flow module {module_id or '?'} requires matching "
+                            "observed_topology on the structure module and native visual"
+                        ),
+                    )
+                )
+                continue
+            if (
+                observed not in _GENERIC_FLOW_TOPOLOGIES
+                or visual_topologies != {observed}
+            ):
+                blockers.append(
+                    _issue(
+                        DECONSTRUCTION_TOPOLOGY_MISMATCH,
+                        str(slide_id),
+                        (
+                            f"generic flow module {module_id or '?'} cannot reconstruct "
+                            f"reviewed topology {observed!r}; preserve it with native "
+                            "nodes, markers, and connectors"
+                        ),
+                    )
+                )
         if backend in {"windows_com_v584", "mac_python_pptx_v2"}:
             for visual in visuals:
                 if (
