@@ -187,6 +187,49 @@ class V61DeconstructionAcceptanceTests(unittest.TestCase):
                 [item["code"] for item in result["blockers"]],
             )
 
+    def test_reviewed_sequential_flow_rebuilt_as_matrix_blocks_acceptance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            self.make_project(project)
+            alignment_path = project / ".build" / "blueprint_alignment.json"
+            alignment = json.loads(alignment_path.read_text(encoding="utf-8"))
+            page = alignment["pages"]["S01"]
+            page["structure_modules"] = [
+                {
+                    "module_id": "M1",
+                    "module_kind": "flow",
+                    "contains_editable_text": True,
+                    "observed_topology": "sequential_flow",
+                }
+            ]
+            page["reconstruction_contract"] = {
+                "module_bindings": [
+                    {
+                        "module_id": "M1",
+                        "element_ids": ["MATRIX_1", "ASSET_1"],
+                    }
+                ]
+            }
+            alignment_path.write_text(json.dumps(alignment), encoding="utf-8")
+            spec_path = project / ".build" / "page_specs.json"
+            specs = json.loads(spec_path.read_text(encoding="utf-8"))
+            specs["S01"]["elements"].append(
+                {
+                    "type": "matrix",
+                    "element_id": "MATRIX_1",
+                    "module_id": "M1",
+                    "headers": ["阶段", "内容"],
+                    "rows": [["一", "开始"], ["二", "结束"]],
+                }
+            )
+            spec_path.write_text(json.dumps(specs), encoding="utf-8")
+            result = self.evaluate(project)
+            self.assertFalse(result["accepted"])
+            self.assertIn(
+                "D61_TOPOLOGY_MISMATCH",
+                [item["code"] for item in result["blockers"]],
+            )
+
     def test_unverified_render_blocks_acceptance(self):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)

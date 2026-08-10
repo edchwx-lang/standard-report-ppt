@@ -7,6 +7,16 @@ from typing import Any
 
 
 SCHEMA_VERSION = "6.1"
+_FLOW_TOPOLOGIES = {
+    "sequential_flow",
+    "causal_flow",
+    "timeline",
+    "cycle",
+    "network",
+}
+_GENERIC_FLOW_TOPOLOGIES = {"sequential_flow", "causal_flow"}
+_CONNECTOR_TYPES = {"line", "arrow"}
+_NODE_TYPES = {"asset", "text", "rect", "oval", "text_card"}
 
 
 def _sha256(path: Path) -> str:
@@ -77,6 +87,53 @@ def _classify_editability(blocker: Any) -> dict[str, str]:
     return _issue("D61_VISUAL_SEMANTICS", message, slide_id)
 
 
+def _flow_semantic_blockers(
+    page: dict[str, Any], elements: list[dict[str, Any]], slide_id: str
+) -> list[dict[str, str]]:
+    by_id = {
+        item["element_id"]: item
+        for item in elements
+        if isinstance(item.get("element_id"), str)
+    }
+    contract = page.get("reconstruction_contract", {})
+    bindings = contract.get("module_bindings", []) if isinstance(contract, dict) else []
+    bound_ids = {
+        item.get("module_id"): item.get("element_ids", [])
+        for item in bindings
+        if isinstance(item, dict) and isinstance(item.get("module_id"), str)
+    }
+    blockers: list[dict[str, str]] = []
+    for module in page.get("structure_modules", []):
+        if not isinstance(module, dict):
+            continue
+        module_id = module.get("module_id")
+        topology = module.get("observed_topology")
+        if module.get("module_kind") != "flow" and topology not in _FLOW_TOPOLOGIES:
+            continue
+        ids = bound_ids.get(module_id, [])
+        bound = [by_id[item] for item in ids if item in by_id]
+        types = {item.get("type") for item in bound}
+        connectors = sum(item.get("type") in _CONNECTOR_TYPES for item in bound)
+        nodes = sum(item.get("type") in _NODE_TYPES for item in bound)
+        generic_flow_valid = (
+            topology in _GENERIC_FLOW_TOPOLOGIES and "flow" in types
+        )
+        primitive_flow_valid = connectors >= 1 and nodes >= 2
+        if not generic_flow_valid and not primitive_flow_valid:
+            blockers.append(
+                _issue(
+                    "D61_TOPOLOGY_MISMATCH",
+                    (
+                        f"module {module_id or '?'} was reviewed as "
+                        f"{topology or 'flow'} but its accepted elements do not "
+                        "contain a flow or connected native nodes"
+                    ),
+                    slide_id,
+                )
+            )
+    return blockers
+
+
 def evaluate_deconstruction_acceptance(
     *,
     project_dir: str | Path,
@@ -140,6 +197,13 @@ def evaluate_deconstruction_acceptance(
             for item in elements
             if isinstance(item, dict) and item.get("type") == "asset"
         ]
+        blockers.extend(
+            _flow_semantic_blockers(
+                page if isinstance(page, dict) else {},
+                [item for item in elements if isinstance(item, dict)],
+                slide_id,
+            )
+        )
         for asset_id in expected_crops:
             valid_id = isinstance(asset_id, str) and bool(asset_id)
             asset_path = (
