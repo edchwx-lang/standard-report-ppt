@@ -558,6 +558,10 @@ class V6MacCompileTests(unittest.TestCase):
             if shape.name.startswith(f"EL_{asset_id}_")
         )
         core = next(shape for shape in slide.shapes if shape.name == "SKEL_CORE")
+        chapter = next(shape for shape in slide.shapes if shape.name == "SKEL_CHAPTER")
+        title = next(shape for shape in slide.shapes if shape.name == "SKEL_TITLE")
+        self.assertAlmostEqual(inches(chapter.left), inches(title.left), places=2)
+        self.assertAlmostEqual(inches(chapter.left), inches(core.left), places=2)
         source = next(shape for shape in slide.shapes if shape.name == "SKEL_SOURCE")
         body_left = inches(core.left)
         body_top = inches(core.top + core.height) + 0.12

@@ -263,10 +263,122 @@ def _matches_declared_crop(blueprint: Path | None, asset: Path | None, source_px
         return False
 
 
+def _design_signature(presentation) -> dict[str, Any]:
+    theme_signatures = []
+    for part in presentation.part.package.iter_parts():
+        if "/theme/" in str(part.partname):
+            root = ElementTree.fromstring(part.blob)
+            semantic_nodes = []
+            for node in root.iter():
+                local_name = node.tag.rsplit("}", 1)[-1]
+                if local_name in {
+                    "clrScheme", "fontScheme", "dk1", "lt1", "dk2", "lt2",
+                    "accent1", "accent2", "accent3", "accent4", "accent5",
+                    "accent6", "hlink", "folHlink", "latin", "ea", "cs",
+                    "srgbClr", "sysClr", "schemeClr",
+                }:
+                    semantic_nodes.append(
+                        (local_name, tuple(sorted(node.attrib.items())), node.text or "")
+                    )
+            theme_signatures.append(semantic_nodes)
+    return {
+        "slide_size": [int(presentation.slide_width), int(presentation.slide_height)],
+        "masters": [
+            [layout.name for layout in master.slide_layouts]
+            for master in presentation.slide_masters
+        ],
+        "theme_signatures": theme_signatures,
+    }
+
+
+def _bitmap_template_errors(presentation, project: Path) -> list[dict[str, Any]]:
+    """Require the bitmap deck to inherit the shipped company master/layout."""
+
+    from pptx import Presentation
+
+    template_path = Path(__file__).resolve().parents[1] / "assets" / "company_template.pptx"
+    if not template_path.is_file():
+        return [_issue(BITMAP_CONTRACT_INVALID, "", "company template is missing")]
+    template = Presentation(str(template_path))
+    errors = []
+    if _design_signature(presentation) != _design_signature(template):
+        errors.append(
+            _issue(
+                BITMAP_CONTRACT_INVALID,
+                "",
+                "bitmap PPTX must inherit the company template master and theme",
+            )
+        )
+    if not template.slides:
+        errors.append(_issue(BITMAP_CONTRACT_INVALID, "", "company template has no seed slide"))
+        return errors
+    expected_layout = template.slides[0].slide_layout.name
+    for number, slide in enumerate(presentation.slides, 1):
+        if slide.slide_layout.name != expected_layout:
+            errors.append(
+                _issue(
+                    BITMAP_CONTRACT_INVALID,
+                    f"S{number:02d}",
+                    "bitmap slide must inherit the company template seed layout",
+                )
+            )
+    return errors
+
+
+def _bitmap_skeleton_alignment_errors(slide, slide_id: str) -> list[dict[str, Any]]:
+    names = ("SKEL_CHAPTER", "SKEL_TITLE", "SKEL_CORE")
+    shapes = [next((shape for shape in slide.shapes if shape.name == name), None) for name in names]
+    if any(shape is None for shape in shapes):
+        return []  # Missing shapes are already reported by _skeleton_errors.
+    lefts = [float(shape.left) / _EMU_PER_INCH for shape in shapes]
+    errors = []
+    if max(lefts) - min(lefts) > _TOLERANCE:
+        errors.append(
+            _issue(
+                BITMAP_CONTRACT_INVALID,
+                slide_id,
+                "upper skeleton layers must share one left anchor",
+            )
+        )
+    for shape in shapes:
+        if not shape.has_text_frame:
+            continue
+        for paragraph in shape.text_frame.paragraphs:
+            if paragraph.alignment not in (None, 1):
+                errors.append(
+                    _issue(
+                        BITMAP_CONTRACT_INVALID,
+                        slide_id,
+                        f"{shape.name} text must be left aligned",
+                    )
+                )
+                break
+    return errors
+
+
+def _picture_has_forbidden_effects(shape) -> bool:
+    properties = shape._element.spPr
+    forbidden = {"reflection", "outerShdw", "innerShdw", "glow", "softEdge"}
+    for node in properties.iter():
+        if node.tag.rsplit("}", 1)[-1] in forbidden:
+            return True
+    style = shape._element.find(f"{{{_P_NS}}}style")
+    if style is not None:
+        effect_ref = style.find(f"{{{_A_NS}}}effectRef")
+        if effect_ref is not None:
+            try:
+                if int(effect_ref.get("idx", "0")) != 0:
+                    return True
+            except ValueError:
+                return True
+    return False
+
+
 def audit_bitmap_pptx(pptx_path: str | Path, bitmap_contract: dict[str, Any], project_dir: str | Path) -> dict[str, Any]:
     from pptx import Presentation
 
     presentation = Presentation(str(pptx_path)); pages = _pages(bitmap_contract); project = Path(project_dir).resolve(); blockers = []
+    blockers.extend(_bitmap_template_errors(presentation, project))
     if not isinstance(bitmap_contract, dict) or bitmap_contract.get("schema_version") != "6.0" or bitmap_contract.get("pipeline_revision") != "6.0.0" or bitmap_contract.get("construction_mode") != "bitmap":
         blockers.append(_issue(BITMAP_CONTRACT_INVALID, "", "invalid V6 bitmap contract header"))
     ppt_slide_ids = {f"S{index:02d}" for index in range(1, len(presentation.slides) + 1)}
@@ -275,6 +387,7 @@ def audit_bitmap_pptx(pptx_path: str | Path, bitmap_contract: dict[str, Any], pr
     for number, slide in enumerate(presentation.slides, 1):
         slide_id = f"S{number:02d}"; record = pages.get(slide_id, {}) if isinstance(pages.get(slide_id, {}), dict) else {}
         blockers.extend(_skeleton_errors(slide, BITMAP_CONTRACT_INVALID, slide_id))
+        blockers.extend(_bitmap_skeleton_alignment_errors(slide, slide_id))
         asset_id = record.get("asset_id"); expected = _prefix(asset_id) if isinstance(asset_id, str) else ""
         if record.get("outline") != "none":
             blockers.append(_issue(BITMAP_CONTRACT_INVALID, slide_id, "bitmap contract outline must be none"))
@@ -296,6 +409,8 @@ def audit_bitmap_pptx(pptx_path: str | Path, bitmap_contract: dict[str, Any], pr
             blockers.append(_issue(BITMAP_CONTRACT_INVALID, slide_id, "body picture must not be cropped"))
         if not _picture_outline_is_none(shape):
             blockers.append(_issue(BITMAP_CONTRACT_INVALID, slide_id, "body picture outline must be none"))
+        if _picture_has_forbidden_effects(shape):
+            blockers.append(_issue(BITMAP_CONTRACT_INVALID, slide_id, "body picture must not contain shadow, reflection, glow, or soft-edge effects"))
         left, top, width, height = _box(shape); aspect = shape.image.size[0] / shape.image.size[1]; body_aspect = body[2] / body[3] if body[3] else 0
         expected_width, expected_height = (body[2], body[2] / aspect) if aspect >= body_aspect else (body[3] * aspect, body[3])
         expected_left = body[0] + (body[2] - expected_width) / 2; expected_top = body[1] + (body[3] - expected_height) / 2

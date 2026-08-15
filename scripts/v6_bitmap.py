@@ -35,6 +35,7 @@ ERROR_CROP_BOUNDS = "V6_BITMAP_BODY_CROP_BOUNDS_INVALID"
 ERROR_FULL_IMAGE_CROP = "V6_BITMAP_FULL_IMAGE_CROP_FORBIDDEN"
 ERROR_EXCLUDED_REGIONS = "V6_BITMAP_EXCLUDED_SKELETON_REGIONS_INVALID"
 ERROR_BODY_FRAME_INCLUDED = "V6_BITMAP_BODY_FRAME_INCLUDED"
+ERROR_SKELETON_EDGE_INCLUDED = "V6_BITMAP_SKELETON_EDGE_INCLUDED"
 
 
 def sha256_file(path: str | Path) -> str:
@@ -203,9 +204,59 @@ def _has_complete_perimeter_frame(image: Image.Image) -> bool:
     )
 
 
+def _has_long_skeleton_edge(image: Image.Image) -> bool:
+    """Detect a long frame fragment touching one crop edge.
+
+    Bitmap body crops may contain native card borders internally, but a long,
+    continuous dark line on the crop boundary is a blueprint skeleton remnant.
+    """
+
+    flattened = image.convert("RGB")
+    width, height = flattened.size
+    if width < 20 or height < 20:
+        return False
+    band = min(3, width // 5, height // 5)
+
+    def dark(pixel: tuple[int, int, int]) -> bool:
+        red, green, blue = pixel
+        luminance = (red * 299 + green * 587 + blue * 114) / 1000
+        navy_like = blue >= red * 0.75 and blue >= green * 0.75 and luminance <= 170
+        return luminance <= 135 or navy_like
+
+    def longest_run(values: list[bool]) -> float:
+        longest = current = 0
+        for value in values:
+            current = current + 1 if value else 0
+            longest = max(longest, current)
+        return longest / max(1, len(values))
+
+    def horizontal(y: int) -> float:
+        return longest_run([dark(flattened.getpixel((x, y))) for x in range(width)])
+
+    def vertical(x: int) -> float:
+        return longest_run([dark(flattened.getpixel((x, y))) for y in range(height)])
+
+    inset = min(max(band + 2, 5), width // 4, height // 4)
+    edges_and_inner = (
+        (max(horizontal(y) for y in range(band)), horizontal(inset)),
+        (
+            max(horizontal(height - 1 - y) for y in range(band)),
+            horizontal(height - 1 - inset),
+        ),
+        (max(vertical(x) for x in range(band)), vertical(inset)),
+        (
+            max(vertical(width - 1 - x) for x in range(band)),
+            vertical(width - 1 - inset),
+        ),
+    )
+    return any(edge >= 0.82 and edge - inner >= 0.30 for edge, inner in edges_and_inner)
+
+
 def _assert_borderless_body_crop(image: Image.Image, slide_id: str) -> None:
     if _has_complete_perimeter_frame(image):
         raise ValueError(f"{ERROR_BODY_FRAME_INCLUDED}: {slide_id}")
+    if _has_long_skeleton_edge(image):
+        raise ValueError(f"{ERROR_SKELETON_EDGE_INCLUDED}: {slide_id}")
 
 
 def validate_bitmap_alignment(
@@ -344,6 +395,8 @@ def materialize_bitmap_assets(
         "schema_version": SCHEMA_VERSION,
         "pipeline_revision": PIPELINE_REVISION,
         "construction_mode": "bitmap",
+        "bitmap_policy_version": "6.2",
+        "crop_revision_policy": "manual_unless_catastrophic",
         "pages": contract_pages,
     }
     _write_json_atomic(project / CONTRACT_PATH, contract)

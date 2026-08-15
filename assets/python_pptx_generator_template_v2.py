@@ -331,6 +331,12 @@ def _set_shape_text(shape, element: dict) -> None:
 
 
 def add_skeleton(slide, spec: dict, page_number: int) -> dict[str, float]:
+    # V6.2 bitmap-only correction. Deconstruct coordinates remain unchanged.
+    bitmap_skeleton = DECK_META["construction_mode"] == "bitmap"
+    title_left = 0.56 if bitmap_skeleton else 0.60
+    core_left = 0.56 if bitmap_skeleton else 0.64
+    title_width = 12.20 if bitmap_skeleton else 12.12
+    core_width = 12.20 if bitmap_skeleton else 12.04
     add_textbox(
         slide, spec["chapter"], [0.56, 0.1575, 12.20, 0.47],
         size=20, color=NAVY, bold=True, name="SKEL_CHAPTER",
@@ -340,7 +346,7 @@ def add_skeleton(slide, spec: dict, page_number: int) -> dict[str, float]:
         fill=NAVY, line=None, name="SKEL_TITLE_BAR",
     )
     add_textbox(
-        slide, spec["title"], [0.60, 0.60, 12.12, 0.34],
+        slide, spec["title"], [title_left, 0.60, title_width, 0.34],
         size=16, color=WHITE, bold=True, name="SKEL_TITLE",
     )
     core_text = "\n".join(
@@ -367,8 +373,10 @@ def add_skeleton(slide, spec: dict, page_number: int) -> dict[str, float]:
     core.line.width = Pt(1)
     set_line_dash(core, "dash")
     core_text_shape = add_textbox(
-        slide, core_text, [0.64, 1.09, 12.04, core_height - 0.05],
+        slide, core_text, [core_left, 1.09, core_width, core_height - 0.05],
         size=12, color=BLACK, name="SKEL_CORE",
+        margin_left=0.08 if bitmap_skeleton else 0.04,
+        margin_right=0.08 if bitmap_skeleton else 0.04,
     )
     source_shape = add_textbox(
         slide, spec.get("source", ""), [0.56, 7.218, 10.56, 0.282],

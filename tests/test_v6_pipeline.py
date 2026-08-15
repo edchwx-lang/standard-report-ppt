@@ -892,6 +892,20 @@ class V6PipelineTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "build is locked"):
                 self.run_with_fakes(project, value)
 
+    def test_first_success_reuses_the_v62_bitmap_without_rebuilding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            value = self.make_locked_project(project, mode="bitmap")
+            (project / ".build" / "bitmap_contract.json").write_text(
+                json.dumps({"construction_mode": "bitmap", "pages": {}}),
+                encoding="utf-8",
+            )
+            first = self.run_with_fakes(project, value)
+            self.assertTrue(first["bitmap_acceptance"]["build_locked"])
+            second = self.run_with_fakes(project, value)
+            self.assertTrue(second["cached"])
+            self.assertFalse(second["automatic_recrop_allowed"])
+
     def test_v6_windows_deconstruct_runs_blueprint_fidelity_audit(self):
         self.assertTrue(
             hasattr(

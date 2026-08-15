@@ -168,6 +168,25 @@ class V6BitmapTests(unittest.TestCase):
             ):
                 self.bitmap.materialize_bitmap_assets(project)
 
+    def test_materialize_rejects_a_long_partial_skeleton_edge_in_the_selected_crop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            blueprint = self.write_blueprint(project)
+            with Image.open(blueprint) as source:
+                image = source.copy()
+            ImageDraw.Draw(image).line((10, 20, 170, 20), fill="black", width=2)
+            image.save(blueprint)
+            review = self.bitmap.prepare_bitmap_review(project)
+            alignment = self.alignment(review)
+            (project / ".build" / "bitmap_alignment.json").write_text(
+                json.dumps(alignment), encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(
+                ValueError, "V6_BITMAP_SKELETON_EDGE_INCLUDED"
+            ):
+                self.bitmap.materialize_bitmap_assets(project)
+
     def test_materialize_refuses_missing_review_record(self):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)

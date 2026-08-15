@@ -58,6 +58,12 @@ def add_theme_picture_outline(shape):
     scheme.set("val", "dk1")
     line_ref.append(scheme)
     style.append(line_ref)
+    effect_ref = OxmlElement("a:effectRef")
+    effect_ref.set("idx", "2")
+    effect_color = OxmlElement("a:schemeClr")
+    effect_color.set("val", "accent1")
+    effect_ref.append(effect_color)
+    style.append(effect_ref)
     shape._element.append(style)
 
 
@@ -68,8 +74,11 @@ class V6EditabilityAuditTests(unittest.TestCase):
         self.prebuild = load_module("v6_deconstruction", ROOT / "scripts" / "v6_deconstruction.py")
 
     def deck(self, directory):
-        ppt = Presentation(); ppt.slide_width = Inches(12.25); ppt.slide_height = Inches(7.5)
-        slide = ppt.slides.add_slide(ppt.slide_layouts[6]); add_skeleton(slide)
+        ppt = Presentation(str(ROOT / "assets" / "company_template.pptx"))
+        slide = ppt.slides[0]
+        for shape in list(slide.shapes):
+            slide.shapes._spTree.remove(shape._element)
+        add_skeleton(slide)
         return ppt, slide, Path(directory) / "deck.pptx"
 
     def bitmap_contract(self, directory):
@@ -213,6 +222,7 @@ class V6EditabilityAuditTests(unittest.TestCase):
             messages = [item["message"] for item in report["blockers"]]
             self.assertTrue(any("exactly one square bullet" in item for item in messages))
             self.assertTrue(any("picture outline must be none" in item for item in messages))
+            self.assertTrue(any("shadow, reflection, glow" in item for item in messages))
 
     def test_both_deconstruct_backends_reject_theme_picture_outline(self):
         with tempfile.TemporaryDirectory() as directory:

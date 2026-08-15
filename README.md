@@ -1,4 +1,14 @@
-# Standard Report PPT V6.0.0-rc1
+# Standard Report PPT V6.2
+
+## V6.2 bitmap-only upgrade
+
+V6.2 changes only bitmap-mode work after formal blueprint locking. The first
+structurally valid bitmap PPTX is hash-locked and reused; negligible crop gains
+are left for manual finishing. Windows and macOS bitmap builds now enforce the
+company master/theme/layout, a shared left anchor for the upper three skeleton
+layers, and a body picture with no outline, shadow, reflection, glow, or soft
+edge. Complete or long partial skeleton-frame remnants at crop edges block the
+first build. Pre-blueprint and deconstruction workflows are unchanged.
 
 [中文说明](#中文说明) · [English](#english)
 
