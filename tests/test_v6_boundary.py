@@ -24,9 +24,10 @@ class V6BoundaryTests(unittest.TestCase):
         }
         self.assertEqual(MODULE.FROZEN_SHA256, actual)
 
-    def test_gate_copy_and_local_patch_version_are_documented(self):
+    def test_gate_copy_and_v62_bitmap_only_version_are_documented(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("Standard Report PPT V6.1", skill)
+        self.assertIn("Standard Report PPT V6.2", skill)
+        self.assertIn("V6.2 bitmap-only post-blueprint patch", skill)
         self.assertIn(
             "解构模式（较慢）：逐页拆解蓝图并重建为可编辑 PPT；复杂非原生视觉可保留为局部位图。",
             skill,

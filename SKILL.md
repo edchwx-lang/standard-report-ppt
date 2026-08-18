@@ -3,7 +3,30 @@ name: standard-report-ppt
 description: Use when Codex needs to create, revise, reconstruct, or automate a company fixed-template consulting PowerPoint deck from documents, notes, data, an existing PPTX, or visual references.
 ---
 
-# Standard Report PPT V6.1
+# Standard Report PPT V6.2
+
+## V6.2 bitmap-only post-blueprint patch
+
+This patch changes only `construction_mode: "bitmap"` after formal blueprint
+locking. It must not alter source intake, authoring, ImageGen, blueprint
+composition/locking, or any deconstruction-mode behavior.
+
+- A bitmap body crop must exclude both complete perimeter frames and long
+  skeleton/frame fragments touching any crop edge. These block as
+  `V6_BITMAP_BODY_FRAME_INCLUDED` and `V6_BITMAP_SKELETON_EDGE_INCLUDED`.
+- The final bitmap PPTX must inherit `assets/company_template.pptx` master,
+  theme, and seed layout. Chapter, page-title, and core-judgment skeleton
+  shapes share one left anchor and use left-aligned paragraphs on Windows and
+  macOS.
+- The one body picture has `outline: none` and no shadow, reflection, glow, or
+  soft-edge effect. Postbuild OOXML/PPTX audit enforces the template, skeleton,
+  contain-fit, crop, hash, outline, and effect contracts.
+- The first structurally valid bitmap PPTX is hash-locked in
+  `.build/bitmap_acceptance.json`. Later `--run` calls reuse it without opening
+  PowerPoint. Whitespace, small crop offsets, or visually negligible crop
+  gains are manual-only delivery notes and never authorize automatic recrop or
+  rebuild. Only a catastrophic structural failure permits one
+  `--repair-catastrophic`; a third automatic build is forbidden.
 
 V6 新项目在页数门禁后必须显式选择一种生产方式；两种方式都必须完成内容解析、逐页 ImageGen 和正式蓝图锁定。单独说“蓝图模式”不是有效选择，ImageGen 不可调用时以 `IMAGEGEN_UNAVAILABLE` 停止。
 
@@ -52,6 +75,7 @@ python scripts/project_pipeline.py <project> --run
 V6 post-lock resources are mandatory: `prompts/deconstruction_alignment_prompt.md`,
 `prompts/bitmap_alignment_prompt.md`, `scripts/v6_contracts.py`,
 `scripts/v6_blueprint_gate.py`, `scripts/v6_bitmap.py`,
+`scripts/v62_bitmap_acceptance.py`,
 `scripts/v6_deconstruction.py`, `scripts/v6_mac_spec.py`,
 `scripts/v6_editability_audit.py`, `scripts/v61_deconstruction_acceptance.py`,
 `scripts/project_compiler_mac_v2.py`, and

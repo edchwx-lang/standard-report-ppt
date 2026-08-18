@@ -435,6 +435,7 @@ def preflight_project(project_dir: str | Path) -> dict:
                     "v6_contracts.py",
                     "v6_blueprint_gate.py",
                     "v6_bitmap.py",
+                    "v62_bitmap_acceptance.py",
                     "v6_deconstruction.py",
                     "v6_mac_spec.py",
                     "v6_editability_audit.py",
@@ -2070,6 +2071,21 @@ def _run_v6_project(
         raise ValueError("V6 user revisions require a new explicit project run")
     mode = str(brief["construction_mode"])
     output = _resolve_v6_output_path(project_dir, output_path, mode)
+    bitmap_release = None
+    if mode == "bitmap":
+        bitmap_release = _load_module(
+            "standard_report_v62_bitmap_acceptance",
+            Path(__file__).with_name("v62_bitmap_acceptance.py"),
+        )
+        locked = bitmap_release.locked_acceptance(project_dir, output)
+        if locked is not None and not catastrophic_repair:
+            result_path = project_dir / ".build" / "pipeline_result.json"
+            if not result_path.is_file():
+                raise ValueError("V6.2 locked bitmap build is missing pipeline_result.json")
+            result = _read_json(result_path)
+            result["cached"] = True
+            result["bitmap_acceptance"] = locked
+            return result
     attempt_path = project_dir / ".build" / "v6_build_attempt.json"
     previous = _read_json(attempt_path) if attempt_path.is_file() else {}
     previous_count = int(previous.get("attempt_count", 0))
@@ -2125,6 +2141,14 @@ def _run_v6_project(
             )
         if previous.get("construction_mode") != brief.get("construction_mode"):
             raise ValueError("V6 repair cannot change construction mode")
+        if bitmap_release is not None and not bitmap_release.rebuild_allowed(
+            project_dir,
+            catastrophic_repair=True,
+            reason="BITMAP_CATASTROPHIC_FAILURE",
+        ):
+            raise ValueError(
+                "V6.2 bitmap repair denied: only one recorded catastrophic repair is allowed"
+            )
         _assert_v6_repair_contract_unchanged(
             project_dir,
             str(brief["construction_mode"]),
@@ -2161,6 +2185,10 @@ def _run_v6_project(
         try:
             return action()
         except Exception as exc:
+            # A bitmap PPTX already accepted by V6.2 is never rebuilt merely
+            # because the optional delivery ZIP failed.
+            if bitmap_release is not None and stage_name == "package":
+                raise
             failed = dict(attempt)
             failed.update(
                 {
@@ -2173,6 +2201,13 @@ def _run_v6_project(
                 }
             )
             _write_json_atomic(attempt_path, failed)
+            if bitmap_release is not None:
+                bitmap_release.write_catastrophic_failure(
+                    project_dir,
+                    stage=stage_name,
+                    message=str(exc),
+                    build_attempt=attempt_count,
+                )
             raise
 
     batch_plan, reusable_slides = guarded(
@@ -2478,6 +2513,19 @@ def _run_v6_project(
             str(acceptance_path) if acceptance_path is not None else None
         ),
     }
+    if bitmap_release is not None:
+        acceptance = guarded(
+            "finalize",
+            lambda: bitmap_release.write_acceptance(
+                project_dir,
+                output,
+                bitmap_audit=audit,
+                build_attempt=attempt_count,
+            ),
+        )
+        result["skill_version"] = "6.2"
+        result["bitmap_acceptance"] = acceptance
+        result["automatic_recrop_allowed"] = False
     guarded(
         "finalize",
         lambda: _write_json_atomic(
@@ -3013,7 +3061,7 @@ def main() -> None:
     parser.add_argument(
         "--repair-catastrophic",
         action="store_true",
-        help="V5.9.5 only: permit the single bounded catastrophic repair build",
+        help="Permit the single bounded catastrophic repair build (V5.9.5 or V6.2 bitmap)",
     )
     parser.add_argument(
         "--user-revision",
