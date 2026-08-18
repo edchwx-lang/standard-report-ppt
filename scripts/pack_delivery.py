@@ -503,6 +503,22 @@ def _validate_v6_project(
         )
         if precheck.get("ok") is not True:
             errors.append("V6 deconstruction precheck did not pass")
+        acceptance_path = (
+            project_dir / ".build" / "deconstruction_acceptance.json"
+        )
+        acceptance = (
+            json.loads(acceptance_path.read_text(encoding="utf-8"))
+            if acceptance_path.is_file()
+            else {}
+        )
+        if (
+            acceptance.get("schema_version") != "6.1"
+            or acceptance.get("construction_mode") != "deconstruct"
+            or acceptance.get("accepted") is not True
+            or acceptance.get("decision") != "accept"
+            or acceptance.get("pptx_sha256") != sha256_file(pptx_path)
+        ):
+            errors.append("V6.1 deconstruction acceptance receipt is missing or stale")
     lock_path = project_dir / ".build" / "formal_blueprint_manifest.json"
     if not lock_path.is_file():
         errors.append("V6 formal_blueprint_manifest.json is missing")

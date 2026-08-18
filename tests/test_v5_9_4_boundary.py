@@ -30,7 +30,7 @@ FROZEN_SHA256 = {
         "5b313f2ed90b2c08aae212f4ecbcadc2468d04a21afa4ee786acf73b7ef03d65",
 }
 V6_UPSTREAM_SKILL_SECTION_SHA256 = (
-    "fafbb1045ae4ab5380bc0299fcb1cccfe1f07b152d3c40a04cedef9cc7cc3633"
+    "b61f12710aeff96a51bbcda1eb5e65ced90b9f72c973b39d69f968081c369507"
 )
 SKILL_SECTION_START = "## Standard Report PPT V5.9.2 lightweight alignment patch"
 SKILL_SECTION_END = "without replacing or repainting the formal blueprint."

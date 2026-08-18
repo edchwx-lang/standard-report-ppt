@@ -173,7 +173,7 @@ def _project_skill_version(project_dir: str | Path) -> str:
         if brief.get("schema_version") == "6.0":
             if brief.get("pipeline_revision") != "6.0.0":
                 raise ValueError("V6 pipeline_revision must be 6.0.0")
-            return "6.0.0-rc1"
+            return "6.0.1"
         if brief.get("schema_version") == "5.9":
             revision = str(brief.get("pipeline_revision", ""))
             if revision not in {"5.9.0", "5.9.1", "5.9.2", "5.9.4", "5.9.5", "5.9.6"}:
@@ -740,7 +740,7 @@ def materialize_project(project_dir: str | Path) -> dict:
         result = {
             "schema_version": "6.0",
             "pipeline_revision": "6.0.0",
-            "skill_version": "6.0.0-rc1",
+            "skill_version": "6.0.1",
             "ok": True,
             "authoring_bundle_sha256": _sha256_file(bundle_path),
             "design_draft_hashes": draft_hashes,
@@ -808,7 +808,7 @@ def prepare_visual_review(project_dir: str | Path) -> dict:
         )
         result = generator.generate_review_tiles(project)
         result["schema_version"] = "6.0"
-        result["skill_version"] = "6.0.0-rc1"
+        result["skill_version"] = "6.0.1"
         result["pipeline_revision"] = "6.0.0"
         result["construction_mode"] = "deconstruct"
         _write_json_atomic(project / ".build" / "visual_review_tiles.json", result)
@@ -978,7 +978,7 @@ def _validate_v6_deconstruct_alignment(
     review_manifest = _read_json(review_path)
     if (
         review_manifest.get("schema_version") != "6.0"
-        or review_manifest.get("skill_version") != "6.0.0-rc1"
+        or review_manifest.get("skill_version") != "6.0.1"
         or review_manifest.get("pipeline_revision") != "6.0.0"
         or review_manifest.get("construction_mode") != "deconstruct"
         or not isinstance(review_manifest.get("pages"), dict)
@@ -2089,6 +2089,48 @@ def _run_v6_project(
     attempt_path = project_dir / ".build" / "v6_build_attempt.json"
     previous = _read_json(attempt_path) if attempt_path.is_file() else {}
     previous_count = int(previous.get("attempt_count", 0))
+    if (
+        not catastrophic_repair
+        and mode == "deconstruct"
+        and previous_count == 1
+        and previous.get("status") == "success"
+    ):
+        acceptance_module = _load_module(
+            "standard_report_v61_deconstruction_acceptance_reuse",
+            Path(__file__).with_name("v61_deconstruction_acceptance.py"),
+        )
+        acceptance = acceptance_module.locked_deconstruction_acceptance(
+            project_dir, output
+        )
+        result_path = project_dir / ".build" / "pipeline_result.json"
+        if acceptance is not None and result_path.is_file():
+            result = _read_json(result_path)
+            if result.get("pptx_sha256") != _sha256_file(output):
+                raise ValueError("V6.1 accepted deconstruction result hash is stale")
+            result["cached"] = True
+            result["deconstruction_acceptance"] = str(
+                project_dir / ".build" / "deconstruction_acceptance.json"
+            )
+            if auto_package:
+                delivery = Path(str(result.get("delivery", "")))
+                if not delivery.is_file():
+                    packager = _load_module(
+                        "standard_report_v6_packager_cached_deconstruction",
+                        Path(__file__).with_name("pack_delivery.py"),
+                    )
+                    delivery = (
+                        project_dir / "output" / f"{project_dir.name}_解构版.zip"
+                    )
+                    result["delivery"] = str(
+                        packager.package_v6_delivery(
+                            project_dir,
+                            output,
+                            project_dir / "generate_deck.py",
+                            delivery,
+                        )
+                    )
+            _write_json_atomic(result_path, result)
+            return result
     if catastrophic_repair:
         if (
             previous_count != 1
@@ -2367,7 +2409,7 @@ def _run_v6_project(
     guarded(
         "postbuild_audit", lambda: _write_json_atomic(audit_path, audit)
     )
-    if not audit.get("ok"):
+    if not audit.get("ok") and mode != "deconstruct":
         guarded(
             "postbuild_audit",
             lambda: (_ for _ in ()).throw(
@@ -2380,6 +2422,48 @@ def _run_v6_project(
                 )
             ),
         )
+    acceptance = None
+    acceptance_path = None
+    if mode == "deconstruct":
+        acceptance_module = guarded(
+            "deconstruction_acceptance",
+            lambda: _load_module(
+                "standard_report_v61_deconstruction_acceptance",
+                Path(__file__).with_name("v61_deconstruction_acceptance.py"),
+            ),
+        )
+        acceptance = guarded(
+            "deconstruction_acceptance",
+            lambda: acceptance_module.evaluate_deconstruction_acceptance(
+                project_dir=project_dir,
+                pptx_path=output,
+                brief=brief,
+                builder_backend=backend,
+                precheck=precheck,
+                editability_audit=audit,
+                render_result=render_result,
+                fidelity_report=fidelity_report,
+            ),
+        )
+        acceptance_path = guarded(
+            "deconstruction_acceptance",
+            lambda: acceptance_module.write_deconstruction_acceptance(
+                project_dir, acceptance
+            ),
+        )
+        if not acceptance.get("accepted"):
+            guarded(
+                "deconstruction_acceptance",
+                lambda: (_ for _ in ()).throw(
+                    ValueError(
+                        "V6.1 deconstruction acceptance failed: "
+                        + "; ".join(
+                            str(item.get("message", item))
+                            for item in acceptance.get("blockers", [])
+                        )
+                    )
+                ),
+            )
     contracts = guarded(
         "finalize",
         lambda: _load_module(
@@ -2408,7 +2492,7 @@ def _run_v6_project(
     result = {
         "schema_version": "6.0",
         "pipeline_revision": "6.0.0",
-        "skill_version": "6.0.0-rc1",
+        "skill_version": "6.1.0" if mode == "deconstruct" else "6.0.1",
         "production_mode": "blueprint",
         "construction_mode": mode,
         "builder_backend": backend,
@@ -2425,6 +2509,9 @@ def _run_v6_project(
             else None
         ),
         "visual_verification": bool(render_result.get("visual_verification")),
+        "deconstruction_acceptance": (
+            str(acceptance_path) if acceptance_path is not None else None
+        ),
     }
     if bitmap_release is not None:
         acceptance = guarded(

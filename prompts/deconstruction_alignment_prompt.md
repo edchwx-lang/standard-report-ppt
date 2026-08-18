@@ -17,6 +17,19 @@ Every `structure_modules[]` record must contain:
   `geometry`, or `mixed`;
 - boolean `contains_editable_text`.
 
+When a reviewed module contains connected native geometry, also record
+`observed_topology` as `sequential_flow`, `causal_flow`, `timeline`, `cycle`, or
+`network`. Copy the same value to every native visual census record bound to
+that connected structure. This field describes the locked blueprint; it does
+not select or redesign the page.
+
+The generic `flow` element is valid only for `sequential_flow` and
+`causal_flow`. A `timeline`, `cycle`, or `network` must retain its visible
+topology with separately bound editable nodes, markers, labels, lines, and
+arrows. Do not substitute equal-width flow cards for those structures. Missing
+or conflicting topology metadata blocks both Windows and macOS before either
+builder opens.
+
 Every `text_decisions[]` record must include `module_id` when the selected text
 belongs to a body module. Skeleton roles may omit `module_id`.
 

@@ -70,6 +70,24 @@ class V6BoundaryTests(unittest.TestCase):
             skill,
         )
 
+    def test_v6_pre_imagegen_prompt_preserves_visual_freedom_cross_platform(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        patch_prompt = (
+            ROOT / "prompts" / "v6_pre_imagegen_freedom_prompt.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("prompts/v6_pre_imagegen_freedom_prompt.md", skill)
+        self.assertIn("Agent-added negative constraints are forbidden", patch_prompt)
+        self.assertIn(
+            "Do not add bans on photos, icons, maps, people, devices, products, or illustrations",
+            patch_prompt,
+        )
+        self.assertIn("Do not force a text-card-only page", patch_prompt)
+        self.assertIn(
+            "The same pre-ImageGen contract applies on Windows and macOS",
+            patch_prompt,
+        )
+        self.assertIn("both `deconstruct` and `bitmap`", patch_prompt)
+
     def test_mac_deconstruction_documentation_requires_atomic_reviewed_crops(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         prompt = (ROOT / "prompts" / "deconstruction_alignment_prompt.md").read_text(

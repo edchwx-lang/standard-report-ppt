@@ -233,6 +233,21 @@ class V6DeliveryTests(unittest.TestCase):
             }),
             encoding="utf-8",
         )
+        if mode == "deconstruct":
+            (project / ".build" / "deconstruction_acceptance.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "6.1",
+                        "construction_mode": "deconstruct",
+                        "accepted": True,
+                        "decision": "accept",
+                        "pptx_sha256": hashlib.sha256(
+                            pptx.read_bytes()
+                        ).hexdigest(),
+                    }
+                ),
+                encoding="utf-8",
+            )
         return pptx, generator
 
     def test_outer_bundle_has_exactly_three_entries(self):
@@ -349,6 +364,16 @@ class V6DeliveryTests(unittest.TestCase):
             )
             generator.write_text("print('tampered')\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "generator"):
+                PACK.package_v6_delivery(
+                    project, pptx, generator, project / "delivery.zip"
+                )
+
+    def test_deconstruct_delivery_requires_v61_acceptance_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            pptx, generator = self.make_project(project, "deconstruct")
+            (project / ".build" / "deconstruction_acceptance.json").unlink()
+            with self.assertRaisesRegex(ValueError, "acceptance"):
                 PACK.package_v6_delivery(
                     project, pptx, generator, project / "delivery.zip"
                 )
