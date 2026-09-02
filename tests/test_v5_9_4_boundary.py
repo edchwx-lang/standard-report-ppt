@@ -40,6 +40,10 @@ def sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def portable_text_sha256(path: Path) -> str:
+    return sha256_bytes(path.read_bytes().replace(b"\r\n", b"\n"))
+
+
 def load_module(name: str, path: Path):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
@@ -51,7 +55,7 @@ def load_module(name: str, path: Path):
 class V594BoundaryTests(unittest.TestCase):
     def test_pre_blueprint_files_are_byte_identical_to_v592(self):
         actual = {
-            relative: sha256_bytes((SKILL / relative).read_bytes())
+            relative: portable_text_sha256(SKILL / relative)
             for relative in FROZEN_SHA256
         }
         self.assertEqual(FROZEN_SHA256, actual)

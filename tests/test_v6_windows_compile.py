@@ -5,10 +5,12 @@ import hashlib
 import json
 import tempfile
 import unittest
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 from PIL import Image
+from pptx import Presentation
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -151,6 +153,59 @@ def materialize_bitmap_contract(
 
 
 class V6WindowsCompileTests(unittest.TestCase):
+    def test_windows_com_deconstruct_output_satisfies_v623_contract(self):
+        if sys.platform != "win32":
+            self.skipTest("Windows PowerPoint COM is unavailable")
+        try:
+            import win32com.client  # noqa: F401
+        except ImportError:
+            self.skipTest("pywin32 is unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            project_files(
+                project,
+                "deconstruct",
+                [
+                    {
+                        "element_id": "BODY_TEXT",
+                        "type": "text",
+                        "box": [0, 0, 2, 1],
+                        "text": "Two lines of body text for geometry verification",
+                    }
+                ],
+            )
+            generator = COMPILER.compile_project(project)
+            spec = importlib.util.spec_from_file_location(
+                f"compiled_v623_windows_{id(project)}", generator
+            )
+            compiled = importlib.util.module_from_spec(spec)
+            assert spec.loader is not None
+            spec.loader.exec_module(compiled)
+            try:
+                output = compiled.build_deck(project / "output" / "report.pptx")
+            except Exception as exc:
+                if "Invalid class string" in str(exc):
+                    self.skipTest("Microsoft PowerPoint is unavailable")
+                raise
+            contract_spec = importlib.util.spec_from_file_location(
+                f"v623_windows_contract_{id(project)}",
+                ROOT / "scripts" / "v623_deconstruction_output_contract.py",
+            )
+            contract = importlib.util.module_from_spec(contract_spec)
+            assert contract_spec.loader is not None
+            contract_spec.loader.exec_module(contract)
+            result = contract.audit_deconstruction_output(
+                output, ROOT / "assets" / "company_template.pptx"
+            )
+            self.assertTrue(result["ok"], result["blockers"])
+            presentation = Presentation(output)
+            body = next(
+                shape
+                for shape in presentation.slides[0].shapes
+                if shape.name.startswith("EL_BODY_TEXT_")
+            )
+            self.assertAlmostEqual(1.0, float(body.height) / 914400.0, places=2)
+
     def test_deconstruct_keeps_existing_page_spec_and_adds_stable_names(self):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)

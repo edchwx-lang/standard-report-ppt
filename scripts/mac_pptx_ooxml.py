@@ -59,14 +59,20 @@ def set_arrow_end(shape, value: str = "triangle") -> None:
 
 
 FORBIDDEN_LOCAL_NAMES = {
-    "effectLst", "effectDag", "scene3d", "sp3d", "glow", "reflection", "softEdge"
+    "effectLst", "effectDag", "scene3d", "sp3d", "glow", "reflection",
+    "softEdge", "outerShdw", "innerShdw",
 }
 
 
 def clear_forbidden_effects(root) -> int:
     removed = 0
     for element in list(root.iter()):
-        if etree.QName(element).localname in FORBIDDEN_LOCAL_NAMES:
+        local_name = etree.QName(element).localname
+        if local_name == "effectRef":
+            if element.get("idx") != "0":
+                element.set("idx", "0")
+                removed += 1
+        elif local_name in FORBIDDEN_LOCAL_NAMES:
             parent = element.getparent()
             if parent is not None:
                 parent.remove(element)

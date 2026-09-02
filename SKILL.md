@@ -3,9 +3,49 @@ name: standard-report-ppt
 description: Use when Codex needs to create, revise, reconstruct, or automate a company fixed-template consulting PowerPoint deck from documents, notes, data, an existing PPTX, or visual references.
 ---
 
-# Standard Report PPT V6.2
+# Standard Report PPT V6.2.3
 
-## V6.2 bitmap-only post-blueprint patch
+## V6.2.3 deconstruction-only post-blueprint contract
+
+This patch changes only `construction_mode: "deconstruct"` after formal
+blueprint locking. Source intake, authoring, ImageGen, blueprint composition,
+blueprint hashes, and bitmap-mode behavior remain unchanged.
+
+- The final PPTX must preserve the exact slide size, master/layout inventory,
+  and seed-slide layout of `assets/company_template.pptx`.
+- Every slide must contain the five named editable skeleton objects. The core
+  judgment uses the fixed template position, 12 pt text with one `■` per
+  paragraph, and a black 1 pt dashed border.
+- Shadows, reflections, glow, soft edges, 3-D effects, and nonzero inherited
+  `effectRef` values are forbidden on slides, masters, and layouts.
+- `scripts/v623_deconstruction_output_contract.py` audits the saved PPTX. Its
+  report is SHA-256-bound to `.build/deconstruction_acceptance.json`; a failed,
+  missing, or stale report blocks delivery and cache reuse.
+- Windows continues to use the PowerPoint COM seed-slide builder. macOS keeps
+  the same seed layout and now normalizes inherited `effectRef` to zero while
+  removing explicit inner/outer shadows.
+
+The project schema and pipeline revision stay `6.0` and `6.0.0`; the existing
+deconstruction acceptance schema stays `6.1`. Successful deconstruction runs
+report `skill_version: "6.2.3"`.
+
+## V6.2.2 prompt-freedom and deconstruction post-blueprint patch
+
+V6.2.2 changes only the V6 ImageGen prompt-freedom gate and deconstruction
+work after formal blueprint lock. It preserves canonical content, ImageGen
+count, blueprint bytes, and bitmap behavior.
+
+- Write the exact candidate ImageGen prompt to UTF-8 and run
+  `scripts/v622_prompt_guard.py` before the call. Agent-added bans on logos,
+  icons, photos, people, maps, products, buildings, or other visual categories
+  are blockers; describe the intended visual positively.
+- Windows deconstruction rendering uses the bundled Node runtime discovery
+  already used by bitmap rendering.
+- Windows deconstruction text boxes disable automatic sizing before margins
+  and restore the page-spec height. Both backends reject resolved text geometry
+  that differs from the literal page-spec box.
+
+## V6.2.1 bitmap-only post-blueprint runtime and delivery patch
 
 This patch changes only `construction_mode: "bitmap"` after formal blueprint
 locking. It must not alter source intake, authoring, ImageGen, blueprint
@@ -27,6 +67,12 @@ composition/locking, or any deconstruction-mode behavior.
   gains are manual-only delivery notes and never authorize automatic recrop or
   rebuild. Only a catastrophic structural failure permits one
   `--repair-catastrophic`; a third automatic build is forbidden.
+- Windows bitmap rendering injects the bundled Node runtime paths. Bitmap
+  repair snapshots exclude pipeline-owned acceptance state, and theme parts
+  are compared semantically independent of OPC iteration order.
+- V6 bitmap packaging accepts explicit output paths and
+  `pass_with_warnings` only when the bitmap acceptance receipt is locked to the
+  exact PPTX hash. Cached runs never retry packaging.
 
 V6 新项目在页数门禁后必须显式选择一种生产方式；两种方式都必须完成内容解析、逐页 ImageGen 和正式蓝图锁定。单独说“蓝图模式”不是有效选择，ImageGen 不可调用时以 `IMAGEGEN_UNAVAILABLE` 停止。
 
@@ -78,6 +124,8 @@ V6 post-lock resources are mandatory: `prompts/deconstruction_alignment_prompt.m
 `scripts/v62_bitmap_acceptance.py`,
 `scripts/v6_deconstruction.py`, `scripts/v6_mac_spec.py`,
 `scripts/v6_editability_audit.py`, `scripts/v61_deconstruction_acceptance.py`,
+`scripts/v623_deconstruction_output_contract.py`,
+`scripts/v622_prompt_guard.py`,
 `scripts/project_compiler_mac_v2.py`, and
 `assets/python_pptx_generator_template_v2.py`.
 

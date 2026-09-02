@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import zipfile
 from pathlib import Path
@@ -48,6 +49,27 @@ def _prefix(element_id: str) -> str:
 
 def _matching(slide, element_id: str):
     return [shape for shape in slide.shapes if shape.name.startswith(_prefix(element_id))]
+
+
+def _expected_element_box(
+    element: dict[str, Any], body: tuple[float, float, float, float]
+) -> tuple[float, float, float, float] | None:
+    box = element.get("box")
+    if (
+        not isinstance(box, list)
+        or len(box) != 4
+        or any(not isinstance(value, (int, float)) or isinstance(value, bool) for value in box)
+    ):
+        return None
+    left, top, width, height = (float(value) for value in box)
+    if element.get("coord_space", "body") == "body":
+        left += body[0]
+        top += body[1]
+    return left, top, width, height
+
+
+def _box_matches(actual, expected, tolerance: float = .03) -> bool:
+    return all(abs(left - right) <= tolerance for left, right in zip(actual, expected))
 
 
 def _body(slide) -> tuple[float, float, float, float]:
@@ -137,6 +159,7 @@ def audit_deconstruction_pptx(
     for number, slide in enumerate(presentation.slides, 1):
         slide_id = f"S{number:02d}"; spec = specs.get(slide_id, {}) if isinstance(specs.get(slide_id, {}), dict) else {}; page = aligned.get(slide_id, {}) if isinstance(aligned.get(slide_id, {}), dict) else {}
         elements = [item for item in spec.get("elements", []) if isinstance(item, dict)]
+        body = _body(slide)
         for element in elements:
             element_id = element.get("element_id")
             if not isinstance(element_id, str):
@@ -164,6 +187,23 @@ def audit_deconstruction_pptx(
                 blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"{element_id} requires native connector"))
             if kind in _TEXT_TYPES and not any(shape.shape_type != _PICTURE and shape.has_text_frame for shape in matches):
                 blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"{element_id} requires native text frame"))
+            if kind == "text":
+                expected_box = _expected_element_box(element, body)
+                text_shapes = [
+                    shape
+                    for shape in matches
+                    if shape.shape_type != _PICTURE and shape.has_text_frame
+                ]
+                if expected_box is not None and text_shapes and not any(
+                    _box_matches(_box(shape), expected_box) for shape in text_shapes
+                ):
+                    blockers.append(
+                        _issue(
+                            DECONSTRUCTION_EDITABILITY_FAILED,
+                            slide_id,
+                            f"{element_id} text geometry differs from resolved page spec",
+                        )
+                    )
             if kind == "flow":
                 node = any(shape.shape_type == _AUTO_SHAPE for shape in matches)
                 connector = any(shape.shape_type == _LINE for shape in matches)
@@ -187,7 +227,7 @@ def audit_deconstruction_pptx(
                     )
         for selected in _selected(page):
             if selected not in xml.get(slide_id, ""): blockers.append(_issue(DECONSTRUCTION_EDITABILITY_FAILED, slide_id, f"selected text absent from OOXML: {selected!r}"))
-        body = _body(slide); body_area = body[2] * body[3]
+        body_area = body[2] * body[3]
         native = False
         for element in elements:
             element_id = element.get("element_id")
@@ -291,6 +331,24 @@ def _design_signature(presentation) -> dict[str, Any]:
     }
 
 
+def _bitmap_design_signatures_match(
+    actual: dict[str, Any], expected: dict[str, Any]
+) -> bool:
+    """Compare theme parts semantically because OPC part iteration is unordered."""
+
+    if actual.get("slide_size") != expected.get("slide_size"):
+        return False
+    if actual.get("masters") != expected.get("masters"):
+        return False
+    canonical = lambda value: sorted(
+        json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        for item in value
+    )
+    return canonical(actual.get("theme_signatures", [])) == canonical(
+        expected.get("theme_signatures", [])
+    )
+
+
 def _bitmap_template_errors(presentation, project: Path) -> list[dict[str, Any]]:
     """Require the bitmap deck to inherit the shipped company master/layout."""
 
@@ -301,7 +359,9 @@ def _bitmap_template_errors(presentation, project: Path) -> list[dict[str, Any]]
         return [_issue(BITMAP_CONTRACT_INVALID, "", "company template is missing")]
     template = Presentation(str(template_path))
     errors = []
-    if _design_signature(presentation) != _design_signature(template):
+    if not _bitmap_design_signatures_match(
+        _design_signature(presentation), _design_signature(template)
+    ):
         errors.append(
             _issue(
                 BITMAP_CONTRACT_INVALID,

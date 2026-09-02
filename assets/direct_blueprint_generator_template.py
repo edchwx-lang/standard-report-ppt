@@ -260,6 +260,7 @@ def add_textbox(
     margin_right: float = 0.0,
     margin_top: float = 0.0,
     margin_bottom: float = 0.0,
+    preserve_requested_height: bool = False,
 ):
     shape = slide.Shapes.AddTextbox(1, inches(x), inches(y), inches(w), inches(h))
     clear_shape_effects(shape)
@@ -276,12 +277,16 @@ def add_textbox(
         shape.Line.ForeColor.RGB = line
         shape.Line.Weight = 1.0
     frame = shape.TextFrame2
+    if preserve_requested_height:
+        frame.AutoSize = 0
     frame.MarginLeft = inches(margin_left)
     frame.MarginRight = inches(margin_right)
     frame.MarginTop = inches(margin_top)
     frame.MarginBottom = inches(margin_bottom)
     frame.WordWrap = -1
     frame.AutoSize = 0
+    if preserve_requested_height:
+        shape.Height = inches(h)
     frame.VerticalAnchor = valign
     text_range = frame.TextRange
     text_range.Text = text
@@ -1178,6 +1183,10 @@ def render_page_spec(slide, page_spec: dict, body: dict[str, float], project_dir
                 margin_right=float(element.get("margin_right", 0.04)),
                 margin_top=float(element.get("margin_top", 0.02)),
                 margin_bottom=float(element.get("margin_bottom", 0.02)),
+                preserve_requested_height=(
+                    DECK_META.get("schema_version") == "6.0"
+                    and DECK_META.get("construction_mode") == "deconstruct"
+                ),
             )
         elif kind == "rect":
             add_rect(slide, x, y, w, h, fill=_spec_color(element.get("fill"), WHITE), line=_spec_color(element["line"], LIGHT_GRAY) if element.get("line") is not None else None)

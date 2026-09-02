@@ -72,7 +72,7 @@ class V62BitmapAcceptanceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
             failure = {
-                "schema_version": "6.2",
+                "schema_version": "6.2.1",
                 "construction_mode": "bitmap",
                 "decision": "catastrophic_repair_required",
                 "build_locked": False,

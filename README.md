@@ -1,6 +1,23 @@
-# Standard Report PPT V6.2
+# Standard Report PPT V6.2.3
 
-## V6.2 bitmap-only upgrade
+## V6.2.3 deconstruction output contract
+
+V6.2.3 changes only deconstruction-mode work after formal blueprint locking.
+The saved PPTX must inherit the exact company-template slide size, master/layout
+inventory, and seed layout; keep the five editable skeleton objects and the
+standard black 1 pt dashed core border; and contain no active visual effects on
+slides, masters, or layouts. The audit report is hash-bound to acceptance and
+cached reuse. Windows PowerPoint COM and the cross-platform macOS python-pptx
+path both pass the same output contract.
+
+## V6.2.2 prompt and text-geometry upgrade
+
+V6.2.2 prevents agent-added ImageGen bans on logos, icons, photos, people,
+maps, and other visual categories. It also shares the bundled Windows render
+environment across both modes and locks deconstruction text boxes to their
+literal page-spec geometry.
+
+## V6.2.1 bitmap-only upgrade
 
 V6.2 changes only bitmap-mode work after formal blueprint locking. The first
 structurally valid bitmap PPTX is hash-locked and reused; negligible crop gains
@@ -48,7 +65,7 @@ V6 保持蓝图锁定前的内容生产链不变，取消快速模式，新增�
 - Mac 解构模式现已强制执行 G0–G3 视觉普查、全页和 Q1–Q4 哈希绑定审查，并拒绝包含多主体、可编辑文字或原生几何的大块复合裁切。
 - Windows 与 Mac 解构成品都会审计图片轮廓；Mac 编译器还会阻断裁切 PNG 中已经烘焙进去的完整深色外围框线。
 - 位图模式继续保留五层原生可编辑骨架，每页仅放置一个等比例、无轮廓的主体图片；核心判断每段严格只有一个 `■`。
-- 发布源和本地安装路径已完成 377 项自动化测试；Windows 专属 COM 构建算法与蓝图生成前冻结链路未改变。
+- 发布源已完成 422 项自动化测试，包括真实 Windows PowerPoint COM 构建和 Mac/python-pptx 结构构建；蓝图生成前冻结链路未改变。
 - 当前仍为 RC：真实 PowerPoint for Mac 冒烟测试尚未完成，因此尚未标记正式 `V6.0.0`。
 
 ```mermaid
@@ -216,7 +233,7 @@ silently switch to the other.
 - Mac deconstruction now enforces the G0–G3 visual census and hash-bound full-page plus Q1–Q4 review, and rejects composite crops containing multiple subjects, editable text, or native geometry.
 - Both deconstruction backends audit picture outlines. The Mac compiler also blocks a complete dark perimeter frame already baked into a cropped PNG.
 - Bitmap construction retains five native editable skeleton layers and inserts exactly one aspect-preserving, outline-free body image per page. Every core-judgment paragraph contains exactly one `■`.
-- The release source and installed skill pass 377 automated tests. The Windows COM construction algorithm and all frozen pre-blueprint stages remain unchanged.
+- The release source passes 422 automated tests, including a real Windows PowerPoint COM build and the Mac/python-pptx structural build. All frozen pre-blueprint stages remain unchanged.
 - This remains an RC: the real PowerPoint for Mac smoke test remains pending, so the release is not yet labeled final `V6.0.0`.
 
 ### Windows path

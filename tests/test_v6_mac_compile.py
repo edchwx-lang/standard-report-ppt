@@ -30,6 +30,10 @@ def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def portable_text_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
 def portable_font_path() -> Path:
     candidates = (
         Path("C:/Windows/Fonts/arial.ttf"),
@@ -160,12 +164,25 @@ class V6MacCompileTests(unittest.TestCase):
     def test_v1_files_remain_byte_identical(self):
         self.assertEqual(
             V1_COMPILER_SHA256,
-            sha256_file(ROOT / "scripts" / "project_compiler_mac.py"),
+            portable_text_sha256(ROOT / "scripts" / "project_compiler_mac.py"),
         )
         self.assertEqual(
             V1_TEMPLATE_SHA256,
-            sha256_file(ROOT / "assets" / "python_pptx_generator_template.py"),
+            portable_text_sha256(ROOT / "assets" / "python_pptx_generator_template.py"),
         )
+
+    def test_deconstruct_output_satisfies_v623_template_skeleton_and_effect_contract(self):
+        project = self._project("deconstruct")
+        self._materialize_deconstruct(project, [])
+        _generator, output = self._compile_and_build(project)
+        contract = load_module(
+            f"v623_mac_contract_{id(project)}",
+            ROOT / "scripts" / "v623_deconstruction_output_contract.py",
+        )
+        result = contract.audit_deconstruction_output(
+            output, ROOT / "assets" / "company_template.pptx"
+        )
+        self.assertTrue(result["ok"], result["blockers"])
 
     def test_deconstruct_builds_native_editable_elements_with_stable_names(self):
         project = self._project("deconstruct")

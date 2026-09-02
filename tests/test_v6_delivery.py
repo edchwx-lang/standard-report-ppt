@@ -234,6 +234,21 @@ class V6DeliveryTests(unittest.TestCase):
             encoding="utf-8",
         )
         if mode == "deconstruct":
+            output_contract_path = (
+                project / ".build" / "deconstruction_output_contract.json"
+            )
+            output_contract_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "6.2.3",
+                        "construction_mode": "deconstruct",
+                        "ok": True,
+                        "status": "pass",
+                        "pptx_sha256": hashlib.sha256(pptx.read_bytes()).hexdigest(),
+                    }
+                ),
+                encoding="utf-8",
+            )
             (project / ".build" / "deconstruction_acceptance.json").write_text(
                 json.dumps(
                     {
@@ -244,6 +259,22 @@ class V6DeliveryTests(unittest.TestCase):
                         "pptx_sha256": hashlib.sha256(
                             pptx.read_bytes()
                         ).hexdigest(),
+                        "output_contract_report_sha256": hashlib.sha256(
+                            output_contract_path.read_bytes()
+                        ).hexdigest(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+        else:
+            (project / ".build" / "bitmap_acceptance.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "6.2.1",
+                        "construction_mode": "bitmap",
+                        "decision": "accept",
+                        "build_locked": True,
+                        "pptx_sha256": hashlib.sha256(pptx.read_bytes()).hexdigest(),
                     }
                 ),
                 encoding="utf-8",
@@ -263,6 +294,12 @@ class V6DeliveryTests(unittest.TestCase):
                 )
                 nested_py = project / "py.zip"
                 nested_py.write_bytes(archive.read("py.zip"))
+                nested_blueprints = project / "blueprints.zip"
+                nested_blueprints.write_bytes(archive.read("blueprints.zip"))
+            with ZipFile(nested_blueprints) as archive:
+                self.assertIn(
+                    "deconstruction_output_contract.json", archive.namelist()
+                )
             with ZipFile(nested_py) as py_archive:
                 self.assertEqual(["generate_deck.py"], py_archive.namelist())
 
@@ -289,6 +326,51 @@ class V6DeliveryTests(unittest.TestCase):
             self.assertEqual(
                 explicit,
                 PACK.package_v6_delivery(project, pptx, generator, explicit),
+            )
+
+    def test_bitmap_delivery_allows_pass_with_warnings_when_locked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            pptx, generator = self.make_project(project, "bitmap")
+            audit_path = project / ".build" / "bitmap_pptx_audit.json"
+            audit = json.loads(audit_path.read_text(encoding="utf-8"))
+            audit["status"] = "pass_with_warnings"
+            audit_path.write_text(json.dumps(audit), encoding="utf-8")
+            output = project / "any-output-folder" / "delivery.zip"
+            self.assertEqual(
+                output.resolve(),
+                PACK.package_v6_delivery(project, pptx, generator, output),
+            )
+
+    def test_generator_dispatch_routes_v6_to_native_packager(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            pptx, generator = self.make_project(project, "bitmap")
+            (project / "helper.py").write_text("# allowed in V6\n", encoding="utf-8")
+            output = project / "not-desktop" / "delivery.zip"
+            self.assertEqual(
+                output.resolve(),
+                PACK.package_generator_delivery(project, pptx, generator, output),
+            )
+
+    def test_bitmap_delivery_accepts_mac_backend_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            pptx, generator = self.make_project(project, "bitmap")
+            for name in (
+                "runtime_report.json",
+                "pipeline_result.json",
+                "bitmap_pptx_audit.json",
+                "compile_report.json",
+            ):
+                path = project / ".build" / name
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                payload["builder_backend"] = "mac_python_pptx_v2"
+                path.write_text(json.dumps(payload), encoding="utf-8")
+            output = project / "mac-delivery.zip"
+            self.assertEqual(
+                output.resolve(),
+                PACK.package_v6_delivery(project, pptx, generator, output),
             )
 
     def test_delivery_rejects_tampered_design_draft(self):
@@ -374,6 +456,19 @@ class V6DeliveryTests(unittest.TestCase):
             pptx, generator = self.make_project(project, "deconstruct")
             (project / ".build" / "deconstruction_acceptance.json").unlink()
             with self.assertRaisesRegex(ValueError, "acceptance"):
+                PACK.package_v6_delivery(
+                    project, pptx, generator, project / "delivery.zip"
+                )
+
+    def test_deconstruct_delivery_rejects_stale_v623_output_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            pptx, generator = self.make_project(project, "deconstruct")
+            (project / ".build" / "deconstruction_output_contract.json").write_text(
+                json.dumps({"schema_version": "6.2.3", "ok": False}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "output contract"):
                 PACK.package_v6_delivery(
                     project, pptx, generator, project / "delivery.zip"
                 )

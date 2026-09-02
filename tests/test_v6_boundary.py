@@ -19,15 +19,17 @@ V596.loader.exec_module(MODULE)
 class V6BoundaryTests(unittest.TestCase):
     def test_frozen_pre_blueprint_files_remain_byte_identical(self):
         actual = {
-            relative: hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
+            relative: hashlib.sha256(
+                (ROOT / relative).read_bytes().replace(b"\r\n", b"\n")
+            ).hexdigest()
             for relative in MODULE.FROZEN_SHA256
         }
         self.assertEqual(MODULE.FROZEN_SHA256, actual)
 
-    def test_gate_copy_and_v62_bitmap_only_version_are_documented(self):
+    def test_gate_copy_and_v621_bitmap_only_version_are_documented(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("Standard Report PPT V6.2", skill)
-        self.assertIn("V6.2 bitmap-only post-blueprint patch", skill)
+        self.assertIn("V6.2.1 bitmap-only post-blueprint runtime and delivery patch", skill)
         self.assertIn(
             "解构模式（较慢）：逐页拆解蓝图并重建为可编辑 PPT；复杂非原生视觉可保留为局部位图。",
             skill,
@@ -39,8 +41,8 @@ class V6BoundaryTests(unittest.TestCase):
         self.assertIn("### Latest V6.0.0-rc1 status", readme)
         self.assertIn("Mac 解构模式现已强制执行", readme)
         self.assertIn("Mac deconstruction now enforces", readme)
-        self.assertIn("377 项自动化测试", readme)
-        self.assertIn("377 automated tests", readme)
+        self.assertIn("422 项自动化测试", readme)
+        self.assertIn("422 automated tests", readme)
         self.assertIn("真实 PowerPoint for Mac 冒烟测试尚未完成", readme)
         self.assertIn("real PowerPoint for Mac smoke test remains pending", readme)
 

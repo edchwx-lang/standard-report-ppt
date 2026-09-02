@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "6.2"
+SCHEMA_VERSION = "6.2.1"
 ACCEPTANCE_PATH = ".build/bitmap_acceptance.json"
 MAX_BUILD_ATTEMPTS = 2
 MINOR_CROP_REASON = "minor_crop_visual_gain"
@@ -54,7 +54,7 @@ def write_acceptance(
         raise FileNotFoundError(pptx)
     blockers = bitmap_audit.get("blockers", [])
     if bitmap_audit.get("ok") is not True or blockers:
-        raise ValueError("V6.2 bitmap acceptance requires a passing structural audit")
+        raise ValueError("V6.2.1 bitmap acceptance requires a passing structural audit")
     payload = {
         "schema_version": SCHEMA_VERSION,
         "construction_mode": "bitmap",

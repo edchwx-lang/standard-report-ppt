@@ -1,7 +1,7 @@
 interface:
   display_name: "Standard Report PPT"
-  short_description: "V6.1 blueprint-first deconstruct or bitmap consulting decks"
+  short_description: "V6.2.3 blueprint-first deconstruct or bitmap consulting decks"
   brand_color: "#2F5597"
-default_prompt: "Use $standard-report-ppt V6.1 for new projects while preserving V5.9 and V5.8 compatibility. Confirm the exact page count and explicitly ask for deconstruct or bitmap construction before content production. Both modes require builtin ImageGen and one immutable blueprint per page. Use windows_com_v584 on Windows or mac_python_pptx_v2 on macOS; never switch modes automatically. In deconstruct mode, accept and lock the first build when selected text, declared crops, visual semantics/topology, and render validity pass; treat overlap, text capacity, spacing, alignment, and ordinary fidelity as manual-adjustment advisories. Bitmap mode retains V6.0.1 behavior."
+default_prompt: "Use $standard-report-ppt V6.2.3 for new projects while preserving V5.9 and V5.8 compatibility. Confirm the exact page count and explicitly ask for deconstruct or bitmap construction before content production. Both modes require builtin ImageGen and one immutable blueprint per page. Before ImageGen, reject agent-added bans on logos, icons, photos, people, maps, or other visual categories. Use windows_com_v584 on Windows or mac_python_pptx_v2 on macOS; never switch modes automatically. In deconstruct mode, preserve literal text geometry and audit the saved PPTX against the company template, fixed skeleton, and zero-effect contract before acceptance; bind that report to the acceptance cache. Bitmap mode retains V6.2.1 behavior."
 policy:
   allow_implicit_invocation: true

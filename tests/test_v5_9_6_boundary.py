@@ -6,6 +6,12 @@ from pathlib import Path
 
 
 SKILL = Path(__file__).resolve().parents[1]
+
+
+def portable_text_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
 FROZEN_SHA256 = {
     "prompts/page_outline_prompt.md":
         "34c6b589461849d749fccc5009d54b73e4f3e24359e0e44450902b79d59c8709",
@@ -33,7 +39,7 @@ FROZEN_SHA256 = {
 class V596BoundaryTests(unittest.TestCase):
     def test_pre_blueprint_files_remain_byte_identical_to_v595(self):
         actual = {
-            relative: hashlib.sha256((SKILL / relative).read_bytes()).hexdigest()
+            relative: portable_text_sha256(SKILL / relative)
             for relative in FROZEN_SHA256
         }
         self.assertEqual(FROZEN_SHA256, actual)

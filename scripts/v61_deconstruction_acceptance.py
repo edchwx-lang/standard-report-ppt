@@ -144,6 +144,8 @@ def evaluate_deconstruction_acceptance(
     editability_audit: dict[str, Any],
     render_result: dict[str, Any],
     fidelity_report: dict[str, Any] | None = None,
+    output_contract: dict[str, Any],
+    output_contract_report_sha256: str,
 ) -> dict[str, Any]:
     project = Path(project_dir).resolve()
     pptx = Path(pptx_path).resolve()
@@ -160,6 +162,36 @@ def evaluate_deconstruction_acceptance(
         )
     if not pptx.is_file():
         blockers.append(_issue("D61_RENDER_INVALID", "PPTX is missing"))
+
+    pptx_sha256 = _sha256(pptx) if pptx.is_file() else None
+    output_contract_valid = (
+        isinstance(output_contract, dict)
+        and output_contract.get("schema_version") == "6.2.3"
+        and output_contract.get("ok") is True
+        and output_contract.get("status") == "pass"
+        and output_contract.get("pptx_sha256") == pptx_sha256
+        and isinstance(output_contract_report_sha256, str)
+        and len(output_contract_report_sha256) == 64
+    )
+    if not output_contract_valid:
+        reported = output_contract.get("blockers", []) if isinstance(output_contract, dict) else []
+        if reported:
+            for item in reported:
+                if isinstance(item, dict) and str(item.get("code", "")).startswith("D623_"):
+                    blockers.append(
+                        _issue(
+                            str(item["code"]),
+                            str(item.get("message", item)),
+                            str(item.get("slide_id", "")),
+                        )
+                    )
+        if not any(str(item.get("code", "")).startswith("D623_") for item in blockers):
+            blockers.append(
+                _issue(
+                    "D623_OUTPUT_CONTRACT_INVALID",
+                    "V6.2.3 deconstruction output contract is missing, stale, or failed",
+                )
+            )
 
     expected_ids = {
         f"S{index:02d}"
@@ -270,7 +302,8 @@ def evaluate_deconstruction_acceptance(
         "accepted": accepted,
         "decision": "accept" if accepted else "repair_required",
         "pptx": str(pptx),
-        "pptx_sha256": _sha256(pptx) if pptx.is_file() else None,
+        "pptx_sha256": pptx_sha256,
+        "output_contract_report_sha256": output_contract_report_sha256,
         "page_count": len(expected_ids),
         "criteria": {
             "selected_text_present": not any(
@@ -286,6 +319,9 @@ def evaluate_deconstruction_acceptance(
             ),
             "render_valid": not any(
                 item["code"] == "D61_RENDER_INVALID" for item in blockers
+            ),
+            "template_skeleton_and_effects_valid": not any(
+                item["code"].startswith("D623_") for item in blockers
             ),
         },
         "manual_adjustment_allowed": [
@@ -321,12 +357,22 @@ def locked_deconstruction_acceptance(
         result = _read_json(path)
     except (OSError, ValueError, json.JSONDecodeError):
         return None
+    contract_path = Path(project_dir).resolve() / ".build" / "deconstruction_output_contract.json"
+    try:
+        contract = _read_json(contract_path)
+        contract_hash = _sha256(contract_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
     if (
         result.get("schema_version") == SCHEMA_VERSION
         and result.get("construction_mode") == "deconstruct"
         and result.get("accepted") is True
         and result.get("decision") == "accept"
         and result.get("pptx_sha256") == _sha256(pptx)
+        and result.get("output_contract_report_sha256") == contract_hash
+        and contract.get("schema_version") == "6.2.3"
+        and contract.get("ok") is True
+        and contract.get("pptx_sha256") == _sha256(pptx)
     ):
         return result
     return None

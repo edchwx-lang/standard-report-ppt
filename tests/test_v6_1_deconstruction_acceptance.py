@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import tempfile
 import unittest
@@ -90,6 +91,7 @@ class V61DeconstructionAcceptanceTests(unittest.TestCase):
         return pptx
 
     def evaluate(self, project: Path, **overrides):
+        pptx_sha256 = hashlib.sha256((project / "report.pptx").read_bytes()).hexdigest()
         values = {
             "project_dir": project,
             "pptx_path": project / "report.pptx",
@@ -112,9 +114,62 @@ class V61DeconstructionAcceptanceTests(unittest.TestCase):
                 "visual_verification": True,
             },
             "fidelity_report": {"passed": False, "failed_slide_ids": ["S01"]},
+            "output_contract": {
+                "schema_version": "6.2.3",
+                "ok": True,
+                "status": "pass",
+                "pptx_sha256": pptx_sha256,
+                "blockers": [],
+            },
+            "output_contract_report_sha256": "a" * 64,
         }
         values.update(overrides)
         return ACCEPTANCE.evaluate_deconstruction_acceptance(**values)
+
+    def test_failed_v623_output_contract_blocks_acceptance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            self.make_project(project)
+            result = self.evaluate(
+                project,
+                output_contract={
+                    "schema_version": "6.2.3",
+                    "ok": False,
+                    "status": "blocked",
+                    "pptx_sha256": hashlib.sha256((project / "report.pptx").read_bytes()).hexdigest(),
+                    "blockers": [{"code": "D623_FORBIDDEN_EFFECT", "message": "reflection"}],
+                },
+            )
+            self.assertFalse(result["accepted"])
+            self.assertIn("D623_FORBIDDEN_EFFECT", {x["code"] for x in result["blockers"]})
+
+    def test_locked_acceptance_rejects_stale_output_contract_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            self.make_project(project)
+            report_path = project / ".build" / "deconstruction_output_contract.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "6.2.3",
+                        "ok": True,
+                        "pptx_sha256": hashlib.sha256(
+                            (project / "report.pptx").read_bytes()
+                        ).hexdigest(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            report_sha256 = hashlib.sha256(report_path.read_bytes()).hexdigest()
+            result = self.evaluate(project, output_contract_report_sha256=report_sha256)
+            ACCEPTANCE.write_deconstruction_acceptance(project, result)
+            self.assertIsNotNone(
+                ACCEPTANCE.locked_deconstruction_acceptance(project, project / "report.pptx")
+            )
+            report_path.write_text(json.dumps({"ok": False}), encoding="utf-8")
+            self.assertIsNone(
+                ACCEPTANCE.locked_deconstruction_acceptance(project, project / "report.pptx")
+            )
 
     def test_overlap_and_low_fidelity_are_advisory_when_contract_is_complete(self):
         with tempfile.TemporaryDirectory() as directory:
