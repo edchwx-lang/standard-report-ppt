@@ -1,0 +1,43 @@
+name: V6.2.3 cross-platform validation
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  macos-structure:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r requirements-macos.lock python-docx
+      - run: >-
+          python -m unittest
+          tests.test_v621_bitmap_post_blueprint
+          tests.test_v622_deconstruction_patch
+          tests.test_v623_deconstruction_output_contract
+          tests.test_v6_mac_compile
+          tests.test_v6_1_deconstruction_acceptance
+          tests.test_v6_delivery
+
+  windows-structure:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r requirements-macos.lock pywin32==312 python-docx
+      - run: >-
+          python -m unittest
+          tests.test_v621_bitmap_post_blueprint
+          tests.test_v622_deconstruction_patch
+          tests.test_v623_deconstruction_output_contract
+          tests.test_v6_windows_compile
+          tests.test_v6_1_deconstruction_acceptance
+          tests.test_v6_delivery
