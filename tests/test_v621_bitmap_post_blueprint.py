@@ -23,6 +23,7 @@ AUDIT = load("v621_audit_tests", "scripts/v6_editability_audit.py")
 
 
 class V621BitmapPostBlueprintTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "requires Windows path semantics")
     def test_windows_bitmap_render_environment_discovers_bundled_runtime(self):
         with tempfile.TemporaryDirectory() as directory:
             dependencies = Path(directory) / "dependencies"
@@ -40,11 +41,11 @@ class V621BitmapPostBlueprintTests(unittest.TestCase):
                 {"PATH": "existing"}, executable=python
             )
 
-            self.assertEqual(str(node), env["RUNTIME_NODE"])
-            self.assertEqual(str(modules), env["RUNTIME_NODE_MODULES"])
-            self.assertEqual(str(override), env["RUNTIME_BIN_DIR"])
-            self.assertEqual(str(modules), env["NODE_PATH"])
-            self.assertEqual(str(override), env["PATH"].split(os.pathsep)[0])
+            self.assertEqual(str(node.resolve()), env["RUNTIME_NODE"])
+            self.assertEqual(str(modules.resolve()), env["RUNTIME_NODE_MODULES"])
+            self.assertEqual(str(override.resolve()), env["RUNTIME_BIN_DIR"])
+            self.assertEqual(str(modules.resolve()), env["NODE_PATH"])
+            self.assertEqual(str(override.resolve()), env["PATH"].split(os.pathsep)[0])
 
     def test_bitmap_repair_snapshot_ignores_pipeline_owned_acceptance_state(self):
         with tempfile.TemporaryDirectory() as directory:

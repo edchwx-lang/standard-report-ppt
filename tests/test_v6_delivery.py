@@ -324,8 +324,8 @@ class V6DeliveryTests(unittest.TestCase):
             pptx, generator = self.make_project(project, "bitmap")
             explicit = project / "chosen.zip"
             self.assertEqual(
-                explicit,
-                PACK.package_v6_delivery(project, pptx, generator, explicit),
+                explicit.resolve(),
+                PACK.package_v6_delivery(project, pptx, generator, explicit).resolve(),
             )
 
     def test_bitmap_delivery_allows_pass_with_warnings_when_locked(self):
