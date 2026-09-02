@@ -14,6 +14,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: requirements-macos.lock
       - run: python -m pip install -r requirements-macos.lock python-docx
       - run: >-
           python -m unittest
@@ -32,6 +33,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: requirements-macos.lock
       - run: python -m pip install -r requirements-macos.lock pywin32==312 python-docx
       - run: >-
           python -m unittest
