@@ -486,9 +486,12 @@ def _validate_v6_project(
         if audit_path.is_file()
         else {}
     )
+    allowed_audit_statuses = (
+        {"pass", "pass_with_warnings"} if mode == "bitmap" else {"pass"}
+    )
     if (
         audit.get("ok") is not True
-        or audit.get("status") != "pass"
+        or audit.get("status") not in allowed_audit_statuses
         or audit.get("construction_mode") != mode
         or audit.get("builder_backend") != runtime.get("builder_backend")
         or audit.get("pptx_sha256") != sha256_file(pptx_path)
@@ -519,6 +522,21 @@ def _validate_v6_project(
             or acceptance.get("pptx_sha256") != sha256_file(pptx_path)
         ):
             errors.append("V6.1 deconstruction acceptance receipt is missing or stale")
+    else:
+        acceptance_path = project_dir / ".build" / "bitmap_acceptance.json"
+        acceptance = (
+            json.loads(acceptance_path.read_text(encoding="utf-8"))
+            if acceptance_path.is_file()
+            else {}
+        )
+        if (
+            acceptance.get("schema_version") not in {"6.2", "6.2.1"}
+            or acceptance.get("construction_mode") != "bitmap"
+            or acceptance.get("decision") != "accept"
+            or acceptance.get("build_locked") is not True
+            or acceptance.get("pptx_sha256") != sha256_file(pptx_path)
+        ):
+            errors.append("V6.2.1 bitmap acceptance receipt is missing or stale")
     lock_path = project_dir / ".build" / "formal_blueprint_manifest.json"
     if not lock_path.is_file():
         errors.append("V6 formal_blueprint_manifest.json is missing")
@@ -738,6 +756,25 @@ def package_v6_delivery(
         json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     return output
+
+
+def package_generator_delivery(
+    project_dir: str | Path,
+    pptx_path: str | Path,
+    generator_path: str | Path,
+    output_zip: str | Path,
+) -> Path:
+    """Route V6 projects to their native packager; preserve the legacy V5 path."""
+
+    project = Path(project_dir).resolve()
+    brief_path = project / "project_brief.json"
+    try:
+        brief = json.loads(brief_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        brief = {}
+    if brief.get("schema_version") == "6.0":
+        return package_v6_delivery(project, pptx_path, generator_path, output_zip)
+    return package_direct_delivery(project, pptx_path, generator_path, output_zip)
 
 
 def _validate_direct_project(project_dir: Path) -> list[str]:
@@ -1188,7 +1225,7 @@ def package_delivery(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Create a legacy V4 or Direct Blueprint V5 delivery ZIP.")
+    parser = argparse.ArgumentParser(description="Create a V4, V5, or V6 delivery ZIP.")
     parser.add_argument("--project", required=True, type=Path)
     parser.add_argument("--pptx", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
@@ -1196,13 +1233,13 @@ def main() -> None:
     parser.add_argument(
         "--generator",
         type=Path,
-        help="V5 mode: one whole-deck generate_deck.py; produces PPTX + blueprints.zip + py.zip",
+        help="V5/V6 mode: one whole-deck generate_deck.py; produces PPTX + blueprints.zip + py.zip",
     )
     parser.add_argument("--legacy", action="store_true", help="Use the V4 compatibility package format")
     args = parser.parse_args()
     if args.generator:
         print(
-            package_direct_delivery(
+            package_generator_delivery(
                 project_dir=args.project,
                 pptx_path=args.pptx,
                 generator_path=args.generator,

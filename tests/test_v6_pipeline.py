@@ -883,7 +883,7 @@ class V6PipelineTests(unittest.TestCase):
             value = self.make_locked_project(project)
             result = self.run_with_fakes(project, value)
             self.assertTrue(result["ok"])
-            self.assertEqual("6.1.0", result["skill_version"])
+            self.assertEqual("6.2.2", result["skill_version"])
             self.assertTrue(
                 Path(result["deconstruction_acceptance"]).is_file()
             )
@@ -931,6 +931,34 @@ class V6PipelineTests(unittest.TestCase):
             second = self.run_with_fakes(project, value)
             self.assertTrue(second["cached"])
             self.assertFalse(second["automatic_recrop_allowed"])
+
+    def test_cached_bitmap_does_not_retry_packaging(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            value = self.make_locked_project(project, mode="bitmap")
+            (project / ".build" / "bitmap_contract.json").write_text(
+                json.dumps({"construction_mode": "bitmap", "pages": {}}),
+                encoding="utf-8",
+            )
+            self.run_with_fakes(project, value)
+            loaded: list[str] = []
+            real_loader = PIPELINE._load_module
+
+            def loader(name, path):
+                loaded.append(name)
+                return real_loader(name, path)
+
+            with mock.patch.object(PIPELINE, "_load_module", side_effect=loader):
+                cached = PIPELINE._run_v6_project(
+                    project,
+                    value,
+                    None,
+                    catastrophic_repair=False,
+                    user_revision=False,
+                    auto_package=True,
+                )
+            self.assertTrue(cached["cached"])
+            self.assertFalse(any("packager" in name for name in loaded))
 
     def test_v6_windows_deconstruct_runs_blueprint_fidelity_audit(self):
         self.assertTrue(

@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -1577,7 +1578,13 @@ def prebuild_project(
     return result
 
 
-def _run(command: list[str], *, timeout: int = 120, check: bool = True) -> subprocess.CompletedProcess:
+def _run(
+    command: list[str],
+    *,
+    timeout: int = 120,
+    check: bool = True,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         command,
         check=check,
@@ -1586,7 +1593,48 @@ def _run(command: list[str], *, timeout: int = 120, check: bool = True) -> subpr
         errors="replace",
         capture_output=True,
         timeout=timeout,
+        env=env,
     )
+
+
+def _bitmap_render_environment(
+    base_env: dict[str, str] | None = None,
+    *,
+    executable: str | Path | None = None,
+) -> dict[str, str]:
+    """Provision the bundled Node renderer used by V6 Windows postbuild."""
+
+    env = dict(os.environ if base_env is None else base_env)
+    python = Path(executable or sys.executable).resolve()
+    dependencies = python.parent.parent
+    node = dependencies / "node" / "bin" / ("node.exe" if os.name == "nt" else "node")
+    modules = dependencies / "node" / "node_modules"
+    override = dependencies / "bin" / "override"
+    fallback = dependencies / "bin" / "fallback"
+    if node.is_file():
+        env["RUNTIME_NODE"] = str(node)
+    if modules.is_dir():
+        env["RUNTIME_NODE_MODULES"] = str(modules)
+        env["NODE_PATH"] = str(modules)
+    runtime_bin = override if override.is_dir() else fallback
+    if runtime_bin.is_dir():
+        env["RUNTIME_BIN_DIR"] = str(runtime_bin)
+        existing_path = env.get("PATH", "")
+        env["PATH"] = str(runtime_bin) + (os.pathsep + existing_path if existing_path else "")
+    return env
+
+
+def _windows_render_environment_for_mode(
+    mode: str,
+    base_env: dict[str, str] | None = None,
+    *,
+    executable: str | Path | None = None,
+) -> dict[str, str]:
+    """Provision the bundled renderer for either V6 Windows post-lock mode."""
+
+    if mode not in {"deconstruct", "bitmap"}:
+        raise ValueError(f"unsupported V6 construction mode: {mode}")
+    return _bitmap_render_environment(base_env, executable=executable)
 
 
 def _audit_ok(path: Path) -> bool:
@@ -1975,6 +2023,10 @@ def _v6_repair_contract_snapshot(
         if path.name != "v6_build_attempt.json"
     )
     contract_paths.discard(mutable_alignment)
+    if construction_mode == "bitmap":
+        # This receipt is written after the failure snapshot and is process
+        # state, not a user-editable repair input.
+        contract_paths.discard(".build/bitmap_acceptance.json")
     for pattern in ("blueprints/S[0-9][0-9].png", ".build/design_drafts/S[0-9][0-9].png"):
         contract_paths.update(
             path.relative_to(project).as_posix() for path in project.glob(pattern)
@@ -2081,7 +2133,7 @@ def _run_v6_project(
         if locked is not None and not catastrophic_repair:
             result_path = project_dir / ".build" / "pipeline_result.json"
             if not result_path.is_file():
-                raise ValueError("V6.2 locked bitmap build is missing pipeline_result.json")
+                raise ValueError("V6.2.1 locked bitmap build is missing pipeline_result.json")
             result = _read_json(result_path)
             result["cached"] = True
             result["bitmap_acceptance"] = locked
@@ -2147,7 +2199,7 @@ def _run_v6_project(
             reason="BITMAP_CATASTROPHIC_FAILURE",
         ):
             raise ValueError(
-                "V6.2 bitmap repair denied: only one recorded catastrophic repair is allowed"
+                "V6.2.1 bitmap repair denied: only one recorded catastrophic repair is allowed"
             )
         _assert_v6_repair_contract_unchanged(
             project_dir,
@@ -2185,7 +2237,7 @@ def _run_v6_project(
         try:
             return action()
         except Exception as exc:
-            # A bitmap PPTX already accepted by V6.2 is never rebuilt merely
+            # A bitmap PPTX already accepted by V6.2.1 is never rebuilt merely
             # because the optional delivery ZIP failed.
             if bitmap_release is not None and stage_name == "package":
                 raise
@@ -2281,6 +2333,7 @@ def _run_v6_project(
                         "45",
                     ],
                     timeout=180,
+                    env=_windows_render_environment_for_mode(mode),
                 ),
             ),
         )
@@ -2492,7 +2545,7 @@ def _run_v6_project(
     result = {
         "schema_version": "6.0",
         "pipeline_revision": "6.0.0",
-        "skill_version": "6.1.0" if mode == "deconstruct" else "6.0.1",
+        "skill_version": "6.2.2" if mode == "deconstruct" else "6.0.1",
         "production_mode": "blueprint",
         "construction_mode": mode,
         "builder_backend": backend,
@@ -2523,7 +2576,7 @@ def _run_v6_project(
                 build_attempt=attempt_count,
             ),
         )
-        result["skill_version"] = "6.2"
+        result["skill_version"] = "6.2.1"
         result["bitmap_acceptance"] = acceptance
         result["automatic_recrop_allowed"] = False
     guarded(
@@ -3061,7 +3114,7 @@ def main() -> None:
     parser.add_argument(
         "--repair-catastrophic",
         action="store_true",
-        help="Permit the single bounded catastrophic repair build (V5.9.5 or V6.2 bitmap)",
+        help="Permit the single bounded catastrophic repair build (V5.9.5 or V6.2.1 bitmap)",
     )
     parser.add_argument(
         "--user-revision",

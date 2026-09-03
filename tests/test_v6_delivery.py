@@ -248,6 +248,19 @@ class V6DeliveryTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+        else:
+            (project / ".build" / "bitmap_acceptance.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "6.2.1",
+                        "construction_mode": "bitmap",
+                        "decision": "accept",
+                        "build_locked": True,
+                        "pptx_sha256": hashlib.sha256(pptx.read_bytes()).hexdigest(),
+                    }
+                ),
+                encoding="utf-8",
+            )
         return pptx, generator
 
     def test_outer_bundle_has_exactly_three_entries(self):
@@ -289,6 +302,53 @@ class V6DeliveryTests(unittest.TestCase):
             self.assertEqual(
                 explicit,
                 PACK.package_v6_delivery(project, pptx, generator, explicit),
+            )
+
+    def test_bitmap_delivery_allows_pass_with_warnings_when_locked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            pptx, generator = self.make_project(project, "bitmap")
+            audit_path = project / ".build" / "bitmap_pptx_audit.json"
+            audit = json.loads(audit_path.read_text(encoding="utf-8"))
+            audit["status"] = "pass_with_warnings"
+            audit_path.write_text(json.dumps(audit), encoding="utf-8")
+            output = project / "any-output-folder" / "delivery.zip"
+            self.assertEqual(
+                output.resolve(),
+                PACK.package_v6_delivery(project, pptx, generator, output),
+            )
+
+    def test_generator_dispatch_routes_v6_to_native_packager(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            pptx, generator = self.make_project(project, "bitmap")
+            (project / "helper.py").write_text("# allowed in V6\n", encoding="utf-8")
+            output = project / "not-desktop" / "delivery.zip"
+            self.assertEqual(
+                output.resolve(),
+                PACK.package_generator_delivery(project, pptx, generator, output),
+            )
+            with ZipFile(output) as archive:
+                self.assertEqual(3, len(archive.namelist()))
+
+    def test_bitmap_delivery_accepts_mac_backend_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            pptx, generator = self.make_project(project, "bitmap")
+            for name in (
+                "runtime_report.json",
+                "pipeline_result.json",
+                "bitmap_pptx_audit.json",
+                "compile_report.json",
+            ):
+                path = project / ".build" / name
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                payload["builder_backend"] = "mac_python_pptx_v2"
+                path.write_text(json.dumps(payload), encoding="utf-8")
+            output = project / "mac-delivery.zip"
+            self.assertEqual(
+                output.resolve(),
+                PACK.package_v6_delivery(project, pptx, generator, output),
             )
 
     def test_delivery_rejects_tampered_design_draft(self):

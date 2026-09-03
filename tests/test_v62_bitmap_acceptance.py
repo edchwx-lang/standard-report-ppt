@@ -38,6 +38,7 @@ class V62BitmapAcceptanceTests(unittest.TestCase):
                 build_attempt=1,
             )
             self.assertTrue(payload["build_locked"])
+            self.assertEqual("6.2.1", payload["schema_version"])
             self.assertEqual("accept", payload["decision"])
             self.assertEqual("manual_only", payload["minor_crop_adjustment"])
             self.assertIsNotNone(self.release.locked_acceptance(project, pptx))
@@ -72,7 +73,7 @@ class V62BitmapAcceptanceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
             failure = {
-                "schema_version": "6.2",
+                "schema_version": "6.2.1",
                 "construction_mode": "bitmap",
                 "decision": "catastrophic_repair_required",
                 "build_locked": False,

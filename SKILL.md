@@ -3,9 +3,37 @@ name: standard-report-ppt
 description: Use when Codex needs to create, revise, reconstruct, or automate a company fixed-template consulting PowerPoint deck from documents, notes, data, an existing PPTX, or visual references.
 ---
 
-# Standard Report PPT V6.2
+# Standard Report PPT V6.2.2
 
-## V6.2 bitmap-only post-blueprint patch
+## V6.2.2 prompt-freedom and deconstruction post-blueprint patch
+
+V6.2.2 changes only the V6 ImageGen prompt-freedom gate and
+`construction_mode: "deconstruct"` after the formal blueprint is locked. It
+does not change source intake, canonical authoring, evidence routing, page
+specification, ImageGen count, blueprint bytes, or blueprint locking. 位图模式保持
+V6.2.1 行为不变。
+
+- Immediately before each V6 ImageGen call, write the exact candidate prompt
+  to a UTF-8 text file and run `scripts/v622_prompt_guard.py <prompt-file>`.
+  The call is forbidden until the guard passes. A blocked prompt must be
+  rewritten positively; do not change canonical content, visual routing, or
+  any blueprint-production setting to satisfy the guard.
+- The agent must not add bans such as no icons, photos, people, maps, logos,
+  illustrations, devices, products, buildings, or real-world subjects. It
+  must not turn later PowerPoint editability into a request for rectangles,
+  basic geometry, native objects, a fixed card grid, or text-only output.
+- Windows deconstruction rendering uses the same bundled Node runtime
+  discovery as the already-working Windows bitmap renderer. This is a
+  post-lock render-process fix; the bitmap environment is unchanged.
+- Windows COM deconstruction text boxes disable automatic sizing before
+  margins are assigned and restore the requested page-spec height. Other
+  schemas and bitmap construction retain their prior text-box behavior.
+- The Windows and macOS deconstruction postbuild audit rejects a native text
+  shape whose resolved geometry differs from its literal page-spec box. This
+  prevents a clipped one-line text box from passing merely because it exists
+  and remains editable.
+
+## V6.2.1 bitmap-only post-blueprint runtime and delivery patch
 
 This patch changes only `construction_mode: "bitmap"` after formal blueprint
 locking. It must not alter source intake, authoring, ImageGen, blueprint
@@ -27,6 +55,18 @@ composition/locking, or any deconstruction-mode behavior.
   gains are manual-only delivery notes and never authorize automatic recrop or
   rebuild. Only a catastrophic structural failure permits one
   `--repair-catastrophic`; a third automatic build is forbidden.
+- Windows bitmap rendering must inject the bundled Node runtime paths into the
+  render subprocess. This applies only after the formal blueprint lock; the
+  macOS renderer and both deconstruction chains are unchanged.
+- Bitmap repair snapshots exclude pipeline-owned acceptance state. Theme parts
+  are compared semantically without depending on OPC package iteration order.
+- V6 bitmap packaging always uses the V6 packager, accepts any explicit output
+  path, and permits `pass_with_warnings` only when the bitmap acceptance receipt
+  is locked to the exact PPTX hash. Extra helper Python files do not block the
+  package; `py.zip` still contains only `generate_deck.py`.
+- Packaging is attempted once in the build that first accepts the PPTX. A later
+  cached `--run` neither rebuilds the deck nor retries packaging, even when the
+  ZIP was not copied to the desktop.
 
 V6 新项目在页数门禁后必须显式选择一种生产方式；两种方式都必须完成内容解析、逐页 ImageGen 和正式蓝图锁定。单独说“蓝图模式”不是有效选择，ImageGen 不可调用时以 `IMAGEGEN_UNAVAILABLE` 停止。
 
@@ -61,7 +101,7 @@ V6 项目合同：
 - V6 构建器兼容 `core_points` 中历史遗留的前导项目符号，但最终每个核心判断段落必须只显示一个 `■`；重复符号或只有符号没有正文均阻断。
 - V6 `--compile` 会先确定性生成当前模式所需的正式蓝图清单、裁切合同及运行时 page specs；它不调用 ImageGen、不构建、不渲染也不打包。
 - V6 的 `--materialize`、两类 review、`--compile`、`--run` 和正式交付在进入后蓝图阶段前统一执行 `V6_IMAGEGEN_INVOCATION_REQUIRED` 门禁。每页必须在追加式 `imagegen_transport_report.json.history` 中有且仅有一个成功 ImageGen 事件，并与 design draft、formal blueprint、当前运输状态及视觉清单的 SHA-256 一致。手工放置图片、只填写当前页记录或自写生成脚本均不构成 ImageGen 调用证明；门禁失败时不得写任何后续产物。`--init`、内容解析和现有 ImageGen 生产/记录逻辑保持不变。
-- V6.1 为保持蓝图生成前流程、现有项目合同、缓存键及位图模式不变，`schema_version` 和 `pipeline_revision` 继续使用 `6.0` 与 `6.0.0`；只有解构验收凭证使用 `schema_version: "6.1"`。
+- V6.2.1 为保持蓝图生成前流程、现有项目合同、缓存键及解构模式不变，`schema_version` 和 `pipeline_revision` 继续使用 `6.0` 与 `6.0.0`；解构验收凭证继续使用 `schema_version: "6.1"`，位图验收凭证使用 `schema_version: "6.2.1"`。
 
 CLI：
 
@@ -78,6 +118,7 @@ V6 post-lock resources are mandatory: `prompts/deconstruction_alignment_prompt.m
 `scripts/v62_bitmap_acceptance.py`,
 `scripts/v6_deconstruction.py`, `scripts/v6_mac_spec.py`,
 `scripts/v6_editability_audit.py`, `scripts/v61_deconstruction_acceptance.py`,
+`scripts/v622_prompt_guard.py`,
 `scripts/project_compiler_mac_v2.py`, and
 `assets/python_pptx_generator_template_v2.py`.
 
