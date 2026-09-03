@@ -1,20 +1,8 @@
-# Standard Report PPT V6.2
-
-## V6.2 bitmap-only upgrade
-
-V6.2 changes only bitmap-mode work after formal blueprint locking. The first
-structurally valid bitmap PPTX is hash-locked and reused; negligible crop gains
-are left for manual finishing. Windows and macOS bitmap builds now enforce the
-company master/theme/layout, a shared left anchor for the upper three skeleton
-layers, and a body picture with no outline, shadow, reflection, glow, or soft
-edge. Complete or long partial skeleton-frame remnants at crop edges block the
-first build. Pre-blueprint and deconstruction workflows are unchanged.
-
 [中文说明](#中文说明) · [English](#english)
 
 Standard Report PPT 是一个面向 Codex 的固定模板咨询报告 PPT Skill，可将 DOCX、PDF、研究材料、数据、笔记或已有演示文稿转换为可编辑 PowerPoint。
 
-V6 保持蓝图锁定前的内容生产链不变，取消快速模式，新增两种必须显式选择的蓝图后构建方式：较慢但可编辑的解构模式，以及较快、主体不可编辑的位图模式。
+V6.2.2 保持蓝图锁定前的内容生产链不变，取消快速模式，新增两种必须显式选择的蓝图后构建方式：较慢但可编辑的解构模式，以及较快、主体不可编辑的位图模式。
 
 ## Blueprint showcase / 蓝图效果展示
 
@@ -36,7 +24,7 @@ V6 保持蓝图锁定前的内容生产链不变，取消快速模式，新增�
 
 ## 中文说明
 
-### V6 生产方式门禁
+### V6.2.2 生产方式门禁
 
 1. `解构模式（较慢）：逐页拆解蓝图并重建为可编辑 PPT；复杂非原生视觉可保留为局部位图。`
 2. `位图模式（较快）：章节、标题、核心判断、来源和页码可编辑；主体蓝图裁切后作为不可编辑图片放入。`
@@ -48,7 +36,7 @@ V6 保持蓝图锁定前的内容生产链不变，取消快速模式，新增�
 - Mac 解构模式现已强制执行 G0–G3 视觉普查、全页和 Q1–Q4 哈希绑定审查，并拒绝包含多主体、可编辑文字或原生几何的大块复合裁切。
 - Windows 与 Mac 解构成品都会审计图片轮廓；Mac 编译器还会阻断裁切 PNG 中已经烘焙进去的完整深色外围框线。
 - 位图模式继续保留五层原生可编辑骨架，每页仅放置一个等比例、无轮廓的主体图片；核心判断每段严格只有一个 `■`。
-- 发布源和本地安装路径已完成 377 项自动化测试；Windows 专属 COM 构建算法与蓝图生成前冻结链路未改变。
+- 发布源已完成 422 项自动化测试，包括真实 Windows PowerPoint COM 构建和 Mac/python-pptx 结构构建；蓝图生成前冻结链路未改变。
 - 当前仍为 RC：真实 PowerPoint for Mac 冒烟测试尚未完成，因此尚未标记正式 `V6.0.0`。
 
 ```mermaid
@@ -100,7 +88,7 @@ git -C "$HOME\.codex\skills\standard-report-ppt" switch main
 git -C "$HOME\.codex\skills\standard-report-ppt" pull --ff-only origin main
 ```
 
-#### macOS（V6 默认路径）
+#### macOS（V6.2.2 默认路径）
 
 运行路径：
 
@@ -119,7 +107,7 @@ macOS 不使用 PowerPoint COM。要求：
 - Python 3.12
 - PowerPoint for Mac，或用于回退渲染的 LibreOffice
 - Codex 桌面端或其他可加载本地 Skill 的 Codex 环境
-- V6 解构模式和位图模式都需要可用的 ImageGen
+- V6.2.2 解构模式和位图模式都需要可用的 ImageGen
 
 macOS 安装：
 
@@ -150,7 +138,7 @@ $standard-report-ppt 用这份报告做5页PPT，位图模式
 2. 位图模式（较快）：章节、标题、核心判断、来源和页码可编辑；主体蓝图裁切后作为不可编辑图片放入。
 ```
 
-最终页数和生产方式是仅有的常规用户确认。V6 两种方式都必须先完成内容解析和 ImageGen 蓝图锁定；单独选择“蓝图模式”无效。完整合同、视觉规则和交付要求见 [SKILL.md](SKILL.md)。
+最终页数和生产方式是仅有的常规用户确认。V6.2.2 两种方式都必须先完成内容解析和 ImageGen 蓝图锁定；单独选择“蓝图模式”无效。完整合同、视觉规则和交付要求见 [SKILL.md](SKILL.md)。
 
 ### 项目管线命令
 
@@ -166,9 +154,9 @@ python scripts/project_pipeline.py <project> --compile
 python scripts/project_pipeline.py <project> --run --output <project>/output/report.pptx
 ```
 
-`--prepare-visual-review` 用于 V6 解构模式，在正式蓝图锁定后生成全页与 Q1–Q4 哈希绑定审查；V6 位图模式必须使用 `--prepare-bitmap-review`，只做逐页全图审查。
+`--prepare-visual-review` 用于 V6.2.2 解构模式，在正式蓝图锁定后生成全页与 Q1–Q4 哈希绑定审查；V6.2.2 位图模式必须使用 `--prepare-bitmap-review`，只做逐页全图审查。
 
-Windows 外部端到端冒烟已验证 V6 解构、位图两种模式均可由 PowerPoint COM 成功构建。真实 PowerPoint for Mac 冒烟通过前，版本仍标记为 `V6.0.0-rc1`。
+Windows 外部端到端冒烟已验证 V6.2.2 解构、位图两种模式均可由 PowerPoint COM 成功构建。真实 PowerPoint for Mac 冒烟通过前，版本仍标记为 `V6.0.0-rc1`。
 
 ### 验证
 
@@ -176,7 +164,7 @@ Windows 外部端到端冒烟已验证 V6 解构、位图两种模式均可由 P
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
-V6 发布回归包含 Windows/macOS 后端测试、蓝图锁定测试、裁剪合同测试和最终 PPT 资产审计。
+V6.2.2 发布回归包含 Windows/macOS 后端测试、蓝图锁定测试、裁剪合同测试和最终 PPT 资产审计。
 
 ### 目录结构
 
@@ -198,9 +186,9 @@ standard-report-ppt/
 
 ## English
 
-### V6 construction gate
+### V6.2.2 construction gate
 
-Every new V6 project must explicitly select one of these post-blueprint routes:
+Every new V6.2.2 project must explicitly select one of these post-blueprint routes:
 
 1. Deconstruct (slower): parse each blueprint and rebuild an editable PPT; one
    bounded local bitmap may remain for a genuinely non-native visual subject.
@@ -216,7 +204,7 @@ silently switch to the other.
 - Mac deconstruction now enforces the G0–G3 visual census and hash-bound full-page plus Q1–Q4 review, and rejects composite crops containing multiple subjects, editable text, or native geometry.
 - Both deconstruction backends audit picture outlines. The Mac compiler also blocks a complete dark perimeter frame already baked into a cropped PNG.
 - Bitmap construction retains five native editable skeleton layers and inserts exactly one aspect-preserving, outline-free body image per page. Every core-judgment paragraph contains exactly one `■`.
-- The release source and installed skill pass 377 automated tests. The Windows COM construction algorithm and all frozen pre-blueprint stages remain unchanged.
+- The release source passes 422 automated tests, including a real Windows PowerPoint COM build and the Mac/python-pptx structural build. All frozen pre-blueprint stages remain unchanged.
 - This remains an RC: the real PowerPoint for Mac smoke test remains pending, so the release is not yet labeled final `V6.0.0`.
 
 ### Windows path
@@ -230,7 +218,7 @@ Shared content and blueprint
   → PPTX + blueprints.zip + py.zip
 ```
 
-Requirements: Windows 10/11, Microsoft PowerPoint desktop, Python 3.12, a Codex environment that can load local skills, and ImageGen for both V6 construction modes.
+Requirements: Windows 10/11, Microsoft PowerPoint desktop, Python 3.12, a Codex environment that can load local skills, and ImageGen for both V6.2.2 construction modes.
 
 ```powershell
 git clone --branch main --single-branch https://github.com/edchwx-lang/standard-report-ppt.git "$HOME\.codex\skills\standard-report-ppt"
@@ -243,7 +231,7 @@ git -C "$HOME\.codex\skills\standard-report-ppt" switch main
 git -C "$HOME\.codex\skills\standard-report-ppt" pull --ff-only origin main
 ```
 
-### macOS path (V6 default)
+### macOS path (V6.2.2 default)
 
 ```text
 Shared content and blueprint
@@ -255,7 +243,7 @@ Shared content and blueprint
   → PPTX + blueprints.zip + py.zip
 ```
 
-macOS never uses PowerPoint COM. Requirements: macOS, Python 3.12, PowerPoint for Mac or LibreOffice for rendering, a Codex environment that can load local skills, and ImageGen for both V6 construction modes.
+macOS never uses PowerPoint COM. Requirements: macOS, Python 3.12, PowerPoint for Mac or LibreOffice for rendering, a Codex environment that can load local skills, and ImageGen for both V6.2.2 construction modes.
 
 ```bash
 git clone --branch main --single-branch https://github.com/edchwx-lang/standard-report-ppt.git "$HOME/.codex/skills/standard-report-ppt"
@@ -273,8 +261,8 @@ Without either renderer, the pipeline may produce a structurally valid local PPT
 ### Usage
 
 ```text
-$standard-report-ppt Create a 3-slide V6 deck, then use deconstruct construction after locking the blueprints.
-$standard-report-ppt Create a 5-slide V6 deck and use bitmap construction after locking the blueprints.
+$standard-report-ppt Create a 3-slide V6.2.2 deck, then use deconstruct construction after locking the blueprints.
+$standard-report-ppt Create a 5-slide V6.2.2 deck and use bitmap construction after locking the blueprints.
 ```
 
 See [SKILL.md](SKILL.md) for the complete production contract and delivery rules.
@@ -285,7 +273,7 @@ See [SKILL.md](SKILL.md) for the complete production contract and delivery rules
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
-The V6 regression suite covers both platform backends, immutable blueprint locking, mandatory crop contracts, and final PPT asset auditing.
+The V6.2.2 regression suite covers both platform backends, immutable blueprint locking, mandatory crop contracts, and final PPT asset auditing.
 
 ## Notes
 
