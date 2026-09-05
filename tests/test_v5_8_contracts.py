@@ -644,7 +644,11 @@ class V58DocumentationContractTests(unittest.TestCase):
         self.assertIn("visual_plan", skill)
         self.assertIn("original ImageGen", skill)
         self.assertIn("PowerPoint editor guides", skill)
-        self.assertIn("V5.8", agent)
+        # The entry point follows the current release; legacy lifecycle
+        # compatibility is covered by the contracts above, not its UI label.
+        self.assertIn("Use $standard-report-ppt", agent)
+        self.assertIn("follow SKILL.md", agent)
+        self.assertIn("allow_implicit_invocation: true", agent)
 
 
 if __name__ == "__main__":

@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import re
 import unittest
 from pathlib import Path
+from PIL import Image
 
 from tests.boundary_hash import frozen_sha256
 
@@ -36,16 +38,21 @@ class V6BoundaryTests(unittest.TestCase):
             skill,
         )
 
-    def test_readme_documents_latest_v6_status_in_chinese_and_english(self):
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn("### V6.0.0-rc1 最新状态", readme)
-        self.assertIn("### Latest V6.0.0-rc1 status", readme)
-        self.assertIn("Mac 解构模式现已强制执行", readme)
-        self.assertIn("Mac deconstruction now enforces", readme)
-        self.assertIn("377 项自动化测试", readme)
-        self.assertIn("377 automated tests", readme)
-        self.assertIn("真实 PowerPoint for Mac 冒烟测试尚未完成", readme)
-        self.assertIn("real PowerPoint for Mac smoke test remains pending", readme)
+    def test_bilingual_readme_links_and_showcase_images_are_valid(self):
+        # Catch broken language navigation/assets, not a stale release heading
+        # or historical test-count string that legitimate releases must change.
+        for filename, other in [('README.md', 'README.en.md'), ('README.en.md', 'README.md')]:
+            readme = (ROOT / filename).read_text(encoding='utf-8')
+            links = re.findall(r'\[[^\]]*\]\(([^)]+)\)', readme)
+            self.assertIn(other, links)
+            for link in links:
+                if not link.startswith(('http:', 'https:', '#')):
+                    self.assertTrue((ROOT / link.split('#')[0]).is_file(), link)
+            images = re.findall(r'!\[[^\]]*\]\(([^)]+)\)', readme)
+            self.assertEqual(3, len(images))
+            for path in images:
+                with Image.open(ROOT / path) as image:
+                    image.verify()
 
     def test_v6_intake_has_only_the_construction_mode_gate(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
