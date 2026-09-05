@@ -1,7 +1,7 @@
 interface:
   display_name: "Standard Report PPT"
-  short_description: "V6.2.2 editable deconstruct or bitmap consulting decks"
+  short_description: "V6.3.1 editable reconstruction or bitmap report decks"
   brand_color: "#2F5597"
-  default_prompt: "Use $standard-report-ppt V6.2.2 for new projects while preserving V5.9 and V5.8 compatibility. Confirm the exact page count and explicitly ask for deconstruct or bitmap construction before content production. Both modes require builtin ImageGen and one immutable blueprint per page. Before ImageGen, reject agent-added bans on icons, photos, people, maps, logos, or other visual categories. Use windows_com_v584 on Windows or mac_python_pptx_v2 on macOS; never switch modes automatically. In deconstruct mode, preserve literal text geometry and use the bundled Windows render environment. Bitmap mode retains V6.2.1 behavior."
+  default_prompt: "Use $standard-report-ppt V6.3.1 to create a report deck from my material; confirm the exact page count and bitmap or deconstruct mode if missing, then follow SKILL.md for blueprint generation, master-preserving reconstruction, verification and delivery."
 policy:
   allow_implicit_invocation: true
