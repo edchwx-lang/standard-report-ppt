@@ -1,0 +1,27 @@
+{
+  "limits": {"max_builds_per_project": 2, "max_visual_refinements_per_project": 1},
+  "template_sha256": "591551aa5d9bb2c8d256943ddb381244a34b0f855504af50d0edd9b0ef5c2918",
+  "samples": {
+    "TEST-01": {
+      "path": "TEST_v63_full_2p/blueprints/S01.png",
+      "sha256": "4fd0c9314913a4c3ee22fe7d70f1cbf07bce4edf695926ae22e13e5c3498ca44",
+      "source_body_roi_px": [48, 278, 1576, 576],
+      "required_text": ["7731", "8509", "9937", "5.1%", "2024", "2026E", "2027E", "人群扩容", "价值提升", "区域增量"]
+    },
+    "TEST-02": {
+      "path": "TEST_v63_full_2p/blueprints/S02.png",
+      "sha256": "ee43e6f126cb487c9666685e152544df3d1b146b3bf5ebcb5ec42b6f67051151",
+      "source_body_roi_px": [32, 242, 1592, 623],
+      "company_logo_subjects": ["MATTEL", "HASBRO", "BANDAI", "TAKARA"],
+      "bottom_icon_subjects": ["FACTORY", "GAMEPAD", "SHIELD", "STORE", "HEADSET", "GLOBE", "PEOPLE", "GROWTH"],
+      "required_text": ["2631", "32.1%", "2311", "28.2%", "2360", "28.8%", "10.9%", "63.3%", "61.4%", "15.3%", "13.6%", "18.6%", "16.0%", "竞争焦点"]
+    },
+    "S3": {
+      "path": "S3_v63_validation/blueprints/S01.png",
+      "sha256": "0375628edd006770862e0930514e9f3f1b99500aebb2327049da09aed921ce0c",
+      "source_body_roi_px": [48, 210, 1588, 643],
+      "company_logo_subjects": ["LEGO", "POPMART_SHARE", "POPMART_TIER", "TOPTOY", "BLOKEES", "52TOYS", "ROLIFE", "X11", "UNICORN"],
+      "required_text": ["1049", "1655", "9.5%", "27.2%", "广东", "浙江", "江苏", "9.0%", "5.3%"]
+    }
+  }
+}

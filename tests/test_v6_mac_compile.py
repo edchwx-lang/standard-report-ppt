@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.boundary_hash import frozen_sha256
+
 from PIL import Image, ImageDraw
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -160,11 +162,11 @@ class V6MacCompileTests(unittest.TestCase):
     def test_v1_files_remain_byte_identical(self):
         self.assertEqual(
             V1_COMPILER_SHA256,
-            sha256_file(ROOT / "scripts" / "project_compiler_mac.py"),
+            frozen_sha256(ROOT / "scripts" / "project_compiler_mac.py"),
         )
         self.assertEqual(
             V1_TEMPLATE_SHA256,
-            sha256_file(ROOT / "assets" / "python_pptx_generator_template.py"),
+            frozen_sha256(ROOT / "assets" / "python_pptx_generator_template.py"),
         )
 
     def test_deconstruct_builds_native_editable_elements_with_stable_names(self):

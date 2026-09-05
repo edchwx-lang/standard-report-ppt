@@ -392,6 +392,11 @@ def _compile_v6_project(project_dir: Path, brief: dict[str, Any]) -> Path:
         or brief.get("construction_mode") not in {"deconstruct", "bitmap"}
     ):
         raise ValueError("Windows V6 compiler requires explicit blueprint construction mode")
+    if (
+        brief.get("construction_mode") == "deconstruct"
+        and (project_dir / ".build" / "v63_scene_graph.json").is_file()
+    ):
+        return _compile_v63_windows_project(project_dir, brief)
     skill_dir = Path(__file__).resolve().parents[1]
     page_count = int(brief["requested_page_count"])
     expected = [f"S{index:02d}" for index in range(1, page_count + 1)]
@@ -455,6 +460,118 @@ def _compile_v6_project(project_dir: Path, brief: dict[str, Any]) -> Path:
             if element.get("type") in {"asset", "body_asset"}
         ),
         "blueprint_hashes": blueprints,
+    }
+    (project_dir / ".build" / "compile_report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return destination
+
+
+def _compile_v63_windows_project(project_dir: Path, brief: dict[str, Any]) -> Path:
+    """Compile the post-lock V6.3 scene route without touching legacy builders."""
+
+    skill_dir = Path(__file__).resolve().parents[1]
+    precheck_path = project_dir / ".build" / "v63_deconstruction_precheck.json"
+    if not precheck_path.is_file():
+        raise ValueError("V63_PREBUILD_REQUIRED")
+    precheck = json.loads(precheck_path.read_text(encoding="utf-8"))
+    if precheck.get("ok") is not True:
+        raise ValueError("V63_PREBUILD_BLOCKED")
+    scene = json.loads(
+        (project_dir / ".build" / "v63_scene_graph.json").read_text(encoding="utf-8")
+    )
+    ledger = json.loads(
+        (project_dir / ".build" / "v63_asset_ledger.json").read_text(encoding="utf-8")
+    )
+    slides = json.loads(
+        (project_dir / ".build" / "slides.json").read_text(encoding="utf-8")
+    )
+    page_count = int(brief["requested_page_count"])
+    expected = [f"S{index:02d}" for index in range(1, page_count + 1)]
+    if sorted(scene.get("pages", {})) != expected:
+        raise ValueError("V63_SCENE_SLIDE_SET_MISMATCH")
+    if [item.get("slide_id") for item in slides] != expected:
+        raise ValueError("V63_SLIDES_INVALID")
+    for asset in ledger.get("assets", []):
+        path = (project_dir / str(asset.get("asset_path", ""))).resolve()
+        if (
+            project_dir not in path.parents
+            or not path.is_file()
+            or asset.get("asset_sha256") != sha256_file(path)
+        ):
+            raise ValueError(f"V63_ASSET_HASH_MISMATCH: {asset.get('asset_id')}")
+    template = (skill_dir / "assets" / "company_template.pptx").resolve()
+    renderer = (skill_dir / "scripts" / "v63_windows_scene_renderer.py").resolve()
+    deck_meta = {
+        "schema_version": "6.3",
+        "pipeline_revision": "6.0.0",
+        "deconstruction_runtime_revision": "6.3.1",
+        "construction_mode": "deconstruct",
+        "builder_backend": "windows_com_v584",
+        "page_count": page_count,
+        "template_path": str(template),
+        "template_sha256": sha256_file(template),
+        "scene_graph_sha256": sha256_file(
+            project_dir / ".build" / "v63_scene_graph.json"
+        ),
+        "asset_ledger_sha256": sha256_file(
+            project_dir / ".build" / "v63_asset_ledger.json"
+        ),
+    }
+    source = f'''from __future__ import annotations
+
+import argparse
+import importlib.util
+from pathlib import Path
+
+DECK_META = {_literal(deck_meta)}
+SLIDES = {_literal(slides)}
+SCENE_GRAPH = {_literal(scene)}
+ASSET_LEDGER = {_literal(ledger)}
+RENDERER_PATH = Path({_literal(str(renderer))})
+TEMPLATE_PATH = Path({_literal(str(template))})
+
+
+def _renderer():
+    spec = importlib.util.spec_from_file_location("standard_report_v63_compiled_renderer", RENDERER_PATH)
+    module = importlib.util.module_from_spec(spec)
+    if spec.loader is None:
+        raise RuntimeError("V63_RENDERER_UNAVAILABLE")
+    spec.loader.exec_module(module)
+    return module
+
+
+def build_deck(output_path=None, slide_ids=None):
+    if slide_ids is not None:
+        raise ValueError("V63 whole-deck construction does not accept slide subsets")
+    project_dir = Path(__file__).resolve().parent
+    output = Path(output_path) if output_path else project_dir / "output" / "report.pptx"
+    return _renderer().build_deck(project_dir, output, template_path=TEMPLATE_PATH)["pptx"]
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Build a V6.3 visual reverse compiled deck")
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--slide-ids")
+    args = parser.parse_args()
+    slide_ids = [item.strip() for item in args.slide_ids.split(",")] if args.slide_ids else None
+    print(build_deck(args.output, slide_ids))
+
+
+if __name__ == "__main__":
+    main()
+'''
+    destination = project_dir / "generate_deck.py"
+    temporary = destination.with_suffix(".py.tmp")
+    compile(source, str(destination), "exec")
+    temporary.write_text(source, encoding="utf-8")
+    temporary.replace(destination)
+    report = {
+        **deck_meta,
+        "generator": destination.name,
+        "generator_sha256": sha256_file(destination),
+        "pages": page_count,
+        "assets": len(ledger.get("assets", [])),
     }
     (project_dir / ".build" / "compile_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

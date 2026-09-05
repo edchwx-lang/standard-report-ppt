@@ -9,6 +9,7 @@ PIPELINE_REVISION = "6.0.0"
 PRODUCTION_MODE = "blueprint"
 BLUEPRINT_ENGINE = "builtin_imagegen"
 PLATFORM_TARGET = "auto"
+DECONSTRUCTION_RUNTIME_REVISION = "6.3.1"
 
 CONSTRUCTION_MODE_DECONSTRUCT = "deconstruct"
 CONSTRUCTION_MODE_BITMAP = "bitmap"
@@ -121,6 +122,32 @@ def post_lock_cache_payload(brief: dict[str, Any], backend: str) -> dict[str, An
     payload = upstream_cache_payload(brief)
     payload["construction_mode"] = mode
     payload["backend"] = backend
+    return payload
+
+
+def v63_post_lock_cache_payload(
+    brief: dict[str, Any],
+    backend: str,
+    formal_blueprint_hashes: dict[str, str],
+) -> dict[str, Any]:
+    """Bind V6.3 only after immutable deconstruction blueprints exist."""
+
+    if not is_v6(brief) or construction_mode(brief) != CONSTRUCTION_MODE_DECONSTRUCT:
+        raise ValueError("V63_DECONSTRUCTION_ONLY")
+    if (
+        not isinstance(formal_blueprint_hashes, dict)
+        or not formal_blueprint_hashes
+        or any(
+            not isinstance(slide_id, str)
+            or not isinstance(digest, str)
+            or len(digest) != 64
+            for slide_id, digest in formal_blueprint_hashes.items()
+        )
+    ):
+        raise ValueError("V63_BLUEPRINT_LOCK_REQUIRED")
+    payload = post_lock_cache_payload(brief, backend)
+    payload["deconstruction_runtime_revision"] = DECONSTRUCTION_RUNTIME_REVISION
+    payload["formal_blueprint_hashes"] = deepcopy(formal_blueprint_hashes)
     return payload
 
 

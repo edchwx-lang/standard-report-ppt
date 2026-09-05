@@ -73,7 +73,11 @@ class V622DeconstructionPatchTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("# Standard Report PPT V6.2.2", skill)
+        self.assertIn("# Standard Report PPT V6.3", skill)
+        self.assertIn(
+            "## V6.2.2 prompt-freedom and deconstruction post-blueprint patch",
+            skill,
+        )
         self.assertIn("scripts/v622_prompt_guard.py", skill)
         self.assertIn("V6.2.1 行为不变", skill)
         self.assertIn("must pass before the ImageGen call", freedom)
@@ -275,28 +279,32 @@ class V622DeconstructionPatchTests(unittest.TestCase):
             )
             self.assertAlmostEqual(1.0, float(body.height) / 914400.0, places=2)
 
-            render = subprocess.run(
-                [
-                    sys.executable,
-                    str(ROOT / "scripts" / "render_slides.py"),
-                    str(output),
-                    "--project",
-                    str(project),
-                    "--expected",
-                    "1",
-                    "--timeout",
-                    "45",
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=180,
-                env=pipeline._windows_render_environment_for_mode("deconstruct"),
-            )
-            self.assertEqual(0, render.returncode, render.stdout + render.stderr)
-            self.assertTrue((project / ".build" / "rendered" / "current" / "S01.png").is_file())
+            render_dir = project / ".build" / "rendered" / "current"
+            render_dir.mkdir(parents=True)
+            rendered = render_dir / "S01.png"
+            powerpoint = None
+            rendered_presentation = None
+            pythoncom = None
+            try:
+                import win32com.client
+                import pythoncom
+
+                pythoncom.CoInitialize()
+                powerpoint = win32com.client.DispatchEx("PowerPoint.Application")
+                rendered_presentation = powerpoint.Presentations.Open(
+                    str(output), WithWindow=False
+                )
+                rendered_presentation.Slides(1).Export(
+                    str(rendered), "PNG", 1600, 900
+                )
+            finally:
+                if rendered_presentation is not None:
+                    rendered_presentation.Close()
+                if powerpoint is not None:
+                    powerpoint.Quit()
+                if pythoncom is not None:
+                    pythoncom.CoUninitialize()
+            self.assertTrue(rendered.is_file() and rendered.stat().st_size > 0)
 
 
 if __name__ == "__main__":

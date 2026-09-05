@@ -1,281 +1,116 @@
-[中文说明](#中文说明) · [English](#english)
+# Standard Report PPT · V6.3.1
 
-Standard Report PPT 是一个面向 Codex 的固定模板咨询报告 PPT Skill，可将 DOCX、PDF、研究材料、数据、笔记或已有演示文稿转换为可编辑 PowerPoint。
+**中文** | [English](README.en.md)
 
-V6.2.2 保持蓝图锁定前的内容生产链不变，取消快速模式，新增两种必须显式选择的蓝图后构建方式：较慢但可编辑的解构模式，以及较快、主体不可编辑的位图模式。
+面向 Codex 的固定母版研究报告 PPT Skill：先理解材料、生成视觉蓝图，再选择保留蓝图观感的位图版，或便于后续修改的可编辑解构版。
 
-## Blueprint showcase / 蓝图效果展示
+V6.3.1 的核心是**蓝图锁定后的视觉反向编译**：观察对象的实际位置、颜色、层级与关联，而不是把蓝图重新套进矩阵模板。Windows 使用 PowerPoint COM；macOS 使用共享场景的 python-pptx/OOXML 路线。
 
-以下三张蓝图沿用原仓库展示素材。最终 PPT 中的文字、数字、图表、表格和基础图形由本地运行时重建为可编辑对象。
+## 同一页，三张实际示意图
 
-### S01 — Core material performance / 核心材料性能
+TEST 文档中的市场规模、全球区域销售市场、企业竞争合为一页。两份 PPT 使用同一张锁定蓝图，不是分别生成的设计。
 
-![S01 blueprint](docs/images/S01.png)
+### 1. ImageGen 原始蓝图
 
-### S02 — Value chain and material matrix / 产业链与材料矩阵
+![TEST 单页原始蓝图](docs/images/S01.png)
 
-![S02 blueprint](docs/images/S02.png)
+### 2. 位图模式 PPT
 
-### S03 — Market size and regional opportunities / 市场规模与区域机会
+![位图版 PowerPoint 原生导出](docs/images/S02.png)
 
-![S03 blueprint](docs/images/S03.png)
+五个骨架区域可编辑，主体为一张裁切图片，适合快速交付并直接保留蓝图观感。
 
----
+### 3. 解构模式 PPT
 
-## 中文说明
+![解构版 PowerPoint 原生导出](docs/images/S03.png)
 
-### V6.2.2 生产方式门禁
+此实例主体包含 **195 个可编辑对象、11 张局部图片**，另外保留五个母版占位符。文字、数字、图表组件和基础图形可以修改；地图底图和产品插画保留图像细节。
 
-1. `解构模式（较慢）：逐页拆解蓝图并重建为可编辑 PPT；复杂非原生视觉可保留为局部位图。`
-2. `位图模式（较快）：章节、标题、核心判断、来源和页码可编辑；主体蓝图裁切后作为不可编辑图片放入。`
+> 这是视觉恢复示例，不是经审校的行业研究发布。原蓝图的欧洲引线与部分条形比例存在误差，示意图保留原样；生成的品牌插画不代表授权或背书。重叠产品的可见图像带不等同于完整透明抠图。
 
-两种方式都必须调用 ImageGen、逐页锁定正式蓝图；ImageGen 不可用时停止，不允许位图模式绕过蓝图，也不允许解构模式自动降级。Windows 使用 `windows_com_v584`，macOS 使用 `mac_python_pptx_v2`。两端解构模式在蓝图锁定后共同执行 G0–G3 视觉普查、全页和 Q1–Q4 审查、原子级局部裁切及图片无轮廓门禁；Mac 另外阻断裁切像素中的完整深色外围框线。
+## 两种模式怎么选
 
-### V6.0.0-rc1 最新状态
+| | 位图模式 | 解构模式 |
+|---|---|---|
+| 蓝图 | 必须生成并锁定 | 必须生成并锁定 |
+| 五个骨架区域 | 可编辑 | 保留原母版占位符，只替换文字 |
+| 主体 | 一张裁切图片 | 按蓝图逐对象重建 |
+| 主体文字、数字、图表、表格、基础几何 | 不可单独编辑 | 可编辑 |
+| 复杂地图、Logo、照片、插画 | 包含在主体图中 | 允许无正文的局部裁剪，Logo 自带文字可保留 |
+| 使用取向 | 更快，直接保留观感 | 较慢，便于后续修改 |
 
-- Mac 解构模式现已强制执行 G0–G3 视觉普查、全页和 Q1–Q4 哈希绑定审查，并拒绝包含多主体、可编辑文字或原生几何的大块复合裁切。
-- Windows 与 Mac 解构成品都会审计图片轮廓；Mac 编译器还会阻断裁切 PNG 中已经烘焙进去的完整深色外围框线。
-- 位图模式继续保留五层原生可编辑骨架，每页仅放置一个等比例、无轮廓的主体图片；核心判断每段严格只有一个 `■`。
-- 发布源已完成 422 项自动化测试，包括真实 Windows PowerPoint COM 构建和 Mac/python-pptx 结构构建；蓝图生成前冻结链路未改变。
-- 当前仍为 RC：真实 PowerPoint for Mac 冒烟测试尚未完成，因此尚未标记正式 `V6.0.0`。
+图表可由原生轴、路径、矩形、节点、文字组成，不承诺全部为附带 Excel 数据表的 Chart 对象。两种模式不相互静默降级。
 
-```mermaid
-flowchart LR
-    A[页数门禁] --> B[生产方式门禁]
-    B --> C[共享：内容解析 → ImageGen → 蓝图锁定]
-    C --> D{construction_mode}
-    D -->|deconstruct| E[完整解析与可编辑重建]
-    D -->|bitmap| F[主体裁切与单图放置]
-    E --> G{OS}
-    F --> G
-    G -->|Windows| H[PowerPoint COM]
-    G -->|macOS| I[python-pptx v2]
-```
+## 安装
 
-### 平台运行路径
+需要支持本地 Skill 且有内置 ImageGen 权限的 Codex 环境。Windows 需要桌面版 Microsoft PowerPoint、Python 3.12 及锁定依赖；Mac 使用 Python 3.12，视觉验证需要 PowerPoint for Mac 或受支持的本地渲染环境。
 
-#### Windows
-
-运行路径：
-
-```text
-统一内容与蓝图
-  → 平台无关 page_specs
-  → windows_com_v584
-  → Microsoft PowerPoint COM 构建
-  → PowerPoint 渲染
-  → 审计与三文件交付包
-```
-
-要求：
-
-- Windows 10/11
-- Microsoft PowerPoint 桌面版
-- Python 3.12
-- Codex 桌面端或其他可加载本地 Skill 的 Codex 环境
-- 蓝图模式需要可用的 ImageGen
-
-Windows 安装：
+Windows 全新安装：
 
 ```powershell
-git clone --branch main --single-branch https://github.com/edchwx-lang/standard-report-ppt.git "$HOME\.codex\skills\standard-report-ppt"
+git clone --branch v6.3.1 --single-branch https://github.com/edchwx-lang/standard-report-ppt.git "$env:USERPROFILE/.codex/skills/standard-report-ppt"
+python -m pip install -r "$env:USERPROFILE/.codex/skills/standard-report-ppt/requirements-windows.lock"
 ```
 
-如目录已存在：
-
-```powershell
-git -C "$HOME\.codex\skills\standard-report-ppt" switch main
-git -C "$HOME\.codex\skills\standard-report-ppt" pull --ff-only origin main
-```
-
-#### macOS（V6.2.2 默认路径）
-
-运行路径：
-
-```text
-统一内容与蓝图
-  → 平台无关 page_specs
-  → mac_python_pptx_v2
-  → python-pptx 本地构建
-  → PowerPoint for Mac 渲染（优先）或 LibreOffice 回退
-  → 审计与三文件交付包
-```
-
-macOS 不使用 PowerPoint COM。要求：
-
-- macOS
-- Python 3.12
-- PowerPoint for Mac，或用于回退渲染的 LibreOffice
-- Codex 桌面端或其他可加载本地 Skill 的 Codex 环境
-- V6.2.2 解构模式和位图模式都需要可用的 ImageGen
-
-macOS 安装：
+macOS 全新安装：
 
 ```bash
-git clone --branch main --single-branch https://github.com/edchwx-lang/standard-report-ppt.git "$HOME/.codex/skills/standard-report-ppt"
+git clone --branch v6.3.1 --single-branch https://github.com/edchwx-lang/standard-report-ppt.git "$HOME/.codex/skills/standard-report-ppt"
+python3 -m pip install -r "$HOME/.codex/skills/standard-report-ppt/requirements-macos.lock"
 ```
 
-如目录已存在：
+已有安装请先备份并检查本地修改，不要覆盖未提交文件。标签固定本次发布；跟随开发版本可使用 `main`。安装后重新加载技能列表或开启新任务。
+
+## 怎么用：从材料到 PPT
+
+上传文档并明确页数和模式：
+
+```text
+$standard-report-ppt 用 TEST.docx 做 1 页 PPT，解构模式。
+解析市场规模、全球区域市场和企业竞争三个部分，合为一页。
+```
+
+也可以指定“位图模式”，或明确要求用同一张蓝图分别验证两个模式。
+
+1. **确定页数与模式。** 这是仅有的两个常规用户确认；不额外增加未要求的封面、目录。
+2. **结构化解析材料。** 读取正文、表格及嵌入图片，保留数字、年份、单位、限定条件和来源；组织结论与证据，不把销售额写成产能。
+3. **生成蓝图。** 依据证据选择图表、地图、关系结构或图文表达；不为方便重建而限制成矩阵。每页接受一次成功 ImageGen 结果。
+4. **锁定原图。** 正式蓝图保持原始字节与哈希；不能因为还原困难反复生成。
+5. **进入所选路径。** 位图检查全页并裁除骨架；解构观察真实主体边界，查看整图与六块重叠切片，先写独立视觉清单，再编译原子场景。
+6. **重建并分离素材。** 正文、数字、图表、表格、连线和基础几何可编辑；复杂视觉局部裁剪，地图标注与引线单独重建。母版的章节、标题、核心判断、来源、页码只填文字。
+7. **真实渲染与有限修正。** 查看实际 PPT 导出，检查遗漏、重影、裁剪、几何与字体；明显视觉差异最多定向修正一次，不进入第三次自动构建。
+8. **验收与交付。** 检查真实 PPT、母版、素材和哈希，再交付。打包失败只恢复打包，不重做已验收 PPT；普通残差明确说明。
+
+默认 ZIP 包含最终 PPTX、`blueprints.zip`、`py.zip`，后两者保留蓝图/素材/场景及生成入口。重新运行入口仍需要匹配的技能运行时和项目清单，并非独立应用。明确只要 PPTX 时不强制 ZIP。
+
+## V6.3.1 的修复与边界
+
+- 独立普查、逐 Logo/图标登记；复杂地图保留真实底图，不改成示意多边形。
+- 同一主体坐标变换，避免图片、文字、引线分别拉伸；主体文字可按实际字体度量适配一次。
+- 支持源像素圆角半径，两端共用可编辑轮廓，不再只能依赖默认大圆角。
+- 打包识别 V6.3 验收/编译协议，按真实素材账本收集图片，仍拒绝失效哈希。
+- 补充 Windows 配套 Node 发现；位图外部预览失败可对现有 PPT 做一次原生导出恢复，不重新构建。
+- 区分 PPT 已验收与 ZIP 已打包，保留失败信息；最多两次实际构建、一次视觉修订。
+
+**边界：** 蓝图生成前的内容与 ImageGen 链路不变，正式蓝图字节不变，位图裁切与排版逻辑不变。位图补丁仅限锁定后的预览环境和恢复。用户母版不变。
+
+**平台验证：** Windows 双模式实例已实际运行。Mac 共享几何/编译有自动化覆盖，但本版本未完成 Mac 实机原生渲染验证，须标记 `mac_native_render_unverified`，不能把 Windows 结果当作 Mac 视觉证明。
+
+## 开发与验证
 
 ```bash
-git -C "$HOME/.codex/skills/standard-report-ppt" switch main
-git -C "$HOME/.codex/skills/standard-report-ppt" pull --ff-only origin main
+python -m unittest discover -s tests -p "test_*.py"
 ```
 
-如果 PowerPoint for Mac 和 LibreOffice 均不可用，管线可生成结构有效但未渲染验证的本地 PPTX；此状态不会生成已验证的三文件 ZIP。
+普通用户无需手写场景或逐条执行 CLI。调试已经准备好的工程时：
 
-### 使用方式
-
-```text
-$standard-report-ppt 用这份报告做3页PPT，解构模式
-$standard-report-ppt 用这份报告做5页PPT，位图模式
-```
-
-也可以先提供材料，再按提示选择：
-
-```text
-1. 解构模式（较慢）：逐页拆解蓝图并重建为可编辑 PPT；复杂非原生视觉可保留为局部位图。
-2. 位图模式（较快）：章节、标题、核心判断、来源和页码可编辑；主体蓝图裁切后作为不可编辑图片放入。
-```
-
-最终页数和生产方式是仅有的常规用户确认。V6.2.2 两种方式都必须先完成内容解析和 ImageGen 蓝图锁定；单独选择“蓝图模式”无效。完整合同、视觉规则和交付要求见 [SKILL.md](SKILL.md)。
-
-### 项目管线命令
-
-以下命令用于调试或手动运行已经准备好的项目；普通 Codex 使用无需逐条执行：
-
-```powershell
+```bash
 python scripts/project_pipeline.py <project> --init
+# Agent 按 SKILL.md 准备内容、真实 ImageGen 调用记录、蓝图和模式专属视觉记录
 python scripts/project_pipeline.py <project> --materialize
-python scripts/project_pipeline.py <project> --prepare-visual-review
-# 位图模式改用：
-python scripts/project_pipeline.py <project> --prepare-bitmap-review
-python scripts/project_pipeline.py <project> --compile
 python scripts/project_pipeline.py <project> --run --output <project>/output/report.pptx
 ```
 
-`--prepare-visual-review` 用于 V6.2.2 解构模式，在正式蓝图锁定后生成全页与 Q1–Q4 哈希绑定审查；V6.2.2 位图模式必须使用 `--prepare-bitmap-review`，只做逐页全图审查。
+`awaiting_visual_review` 是内部继续状态：Agent 查看实际渲染、记录判断后，再次 `--run` 完成验收，不应要求用户审批或重新构建。
 
-Windows 外部端到端冒烟已验证 V6.2.2 解构、位图两种模式均可由 PowerPoint COM 成功构建。真实 PowerPoint for Mac 冒烟通过前，版本仍标记为 `V6.0.0-rc1`。
-
-### 验证
-
-```powershell
-python -m unittest discover -s tests -p "test_*.py"
-```
-
-V6.2.2 发布回归包含 Windows/macOS 后端测试、蓝图锁定测试、裁剪合同测试和最终 PPT 资产审计。
-
-### 目录结构
-
-```text
-standard-report-ppt/
-├─ SKILL.md
-├─ agents/
-├─ assets/
-├─ docs/images/
-├─ prompts/
-├─ references/
-├─ scripts/
-├─ tests/
-├─ requirements-windows.lock
-└─ requirements-macos.lock
-```
-
----
-
-## English
-
-### V6.2.2 construction gate
-
-Every new V6.2.2 project must explicitly select one of these post-blueprint routes:
-
-1. Deconstruct (slower): parse each blueprint and rebuild an editable PPT; one
-   bounded local bitmap may remain for a genuinely non-native visual subject.
-2. Bitmap (faster): keep chapter, title, core judgment, source, and page number
-   editable, then place one reviewed cropped body image.
-
-Both routes require built-in ImageGen and one immutable blueprint per page.
-Windows uses `windows_com_v584`; macOS uses `mac_python_pptx_v2`. No route may
-silently switch to the other.
-
-### Latest V6.0.0-rc1 status
-
-- Mac deconstruction now enforces the G0–G3 visual census and hash-bound full-page plus Q1–Q4 review, and rejects composite crops containing multiple subjects, editable text, or native geometry.
-- Both deconstruction backends audit picture outlines. The Mac compiler also blocks a complete dark perimeter frame already baked into a cropped PNG.
-- Bitmap construction retains five native editable skeleton layers and inserts exactly one aspect-preserving, outline-free body image per page. Every core-judgment paragraph contains exactly one `■`.
-- The release source passes 422 automated tests, including a real Windows PowerPoint COM build and the Mac/python-pptx structural build. All frozen pre-blueprint stages remain unchanged.
-- This remains an RC: the real PowerPoint for Mac smoke test remains pending, so the release is not yet labeled final `V6.0.0`.
-
-### Windows path
-
-```text
-Shared content and blueprint
-  → platform-neutral page_specs
-  → windows_com_v584
-  → Microsoft PowerPoint COM build and render
-  → audits
-  → PPTX + blueprints.zip + py.zip
-```
-
-Requirements: Windows 10/11, Microsoft PowerPoint desktop, Python 3.12, a Codex environment that can load local skills, and ImageGen for both V6.2.2 construction modes.
-
-```powershell
-git clone --branch main --single-branch https://github.com/edchwx-lang/standard-report-ppt.git "$HOME\.codex\skills\standard-report-ppt"
-```
-
-To update an existing installation:
-
-```powershell
-git -C "$HOME\.codex\skills\standard-report-ppt" switch main
-git -C "$HOME\.codex\skills\standard-report-ppt" pull --ff-only origin main
-```
-
-### macOS path (V6.2.2 default)
-
-```text
-Shared content and blueprint
-  → platform-neutral page_specs
-  → mac_python_pptx_v2
-  → local python-pptx build
-  → PowerPoint for Mac render or LibreOffice fallback
-  → audits
-  → PPTX + blueprints.zip + py.zip
-```
-
-macOS never uses PowerPoint COM. Requirements: macOS, Python 3.12, PowerPoint for Mac or LibreOffice for rendering, a Codex environment that can load local skills, and ImageGen for both V6.2.2 construction modes.
-
-```bash
-git clone --branch main --single-branch https://github.com/edchwx-lang/standard-report-ppt.git "$HOME/.codex/skills/standard-report-ppt"
-```
-
-To update an existing installation:
-
-```bash
-git -C "$HOME/.codex/skills/standard-report-ppt" switch main
-git -C "$HOME/.codex/skills/standard-report-ppt" pull --ff-only origin main
-```
-
-Without either renderer, the pipeline may produce a structurally valid local PPTX, but it will not issue the verified three-entry ZIP.
-
-### Usage
-
-```text
-$standard-report-ppt Create a 3-slide V6.2.2 deck, then use deconstruct construction after locking the blueprints.
-$standard-report-ppt Create a 5-slide V6.2.2 deck and use bitmap construction after locking the blueprints.
-```
-
-See [SKILL.md](SKILL.md) for the complete production contract and delivery rules.
-
-### Validation
-
-```bash
-python -m unittest discover -s tests -p "test_*.py"
-```
-
-The V6.2.2 regression suite covers both platform backends, immutable blueprint locking, mandatory crop contracts, and final PPT asset auditing.
-
-## Notes
-
-- Generated reports and source documents are not included in this repository.
-- Users are responsible for verifying that source material, logos, templates, and generated content may be used in their intended context.
+详细标准：[SKILL.md](SKILL.md) · [后锁定解构规范](references/v63_visual_repair.md) · [发布验证](docs/releases/v6.3.1.md)。仓库不包含 TEST 原始 Word 或完整用户工程；使用者须确认素材、Logo、母版及生成内容的使用权限。

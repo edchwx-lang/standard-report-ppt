@@ -441,6 +441,7 @@ def _validate_v6_project(
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return [f"V6 project brief is unreadable: {exc}"]
     mode = brief.get("construction_mode")
+    uses_v63 = mode == 'deconstruct' and (project_dir / '.build/v63_scene_graph.json').is_file() and (project_dir / '.build/v63_visual_census.json').is_file()
     if (
         brief.get("schema_version") != "6.0"
         or brief.get("pipeline_revision") != "6.0.0"
@@ -514,7 +515,18 @@ def _validate_v6_project(
             if acceptance_path.is_file()
             else {}
         )
-        if (
+        if uses_v63:
+            spec = importlib.util.spec_from_file_location('v631_delivery_acceptance', Path(__file__).with_name('v63_acceptance.py'))
+            verifier = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(verifier)
+            try:
+                current = verifier.locked_v63_acceptance(project_dir, pptx_path)
+                reviewed = verifier.read_bound_visual_review(project_dir, pptx_path)
+                if current is None or 'bindings' not in current or reviewed is None:
+                    errors.append('V6.3 deconstruction acceptance receipt is missing or stale')
+            except (OSError, ValueError, KeyError) as exc:
+                errors.append(f'V6.3 deconstruction acceptance invalid: {exc}')
+        elif (
             acceptance.get("schema_version") != "6.1"
             or acceptance.get("construction_mode") != "deconstruct"
             or acceptance.get("accepted") is not True
@@ -614,7 +626,7 @@ def _validate_v6_project(
         else {}
     )
     if (
-        compile_report.get("schema_version") != "6.0"
+        compile_report.get("schema_version") != ("6.3" if uses_v63 else "6.0")
         or compile_report.get("pipeline_revision") != "6.0.0"
         or compile_report.get("construction_mode") != mode
         or compile_report.get("builder_backend") != runtime.get("builder_backend")
@@ -623,6 +635,15 @@ def _validate_v6_project(
         or compile_report.get("generator_sha256") != sha256_file(generator_path)
     ):
         errors.append("V6 generator does not match compile_report.json")
+    if uses_v63:
+        for key, relative in [('scene_graph_sha256', '.build/v63_scene_graph.json'), ('asset_ledger_sha256', '.build/v63_asset_ledger.json')]:
+            path = project_dir / relative
+            if not path.is_file() or compile_report.get(key) != sha256_file(path):
+                errors.append(f'V6.3 compile binding is stale: {relative}')
+        try:
+            _v63_delivery_assets(project_dir)
+        except (OSError, ValueError, KeyError) as exc:
+            errors.append(f'V6.3 delivery assets invalid: {exc}')
     try:
         compiler_path = Path(__file__).with_name("project_compiler.py")
         spec = importlib.util.spec_from_file_location(
@@ -648,7 +669,7 @@ def _validate_v6_project(
         )
         if set(page_specs) != set(expected):
             raise ValueError("V6 page spec set is invalid")
-        if mode == "deconstruct":
+        if mode == "deconstruct" and not uses_v63:
             visual = json.loads(
                 (project_dir / ".build" / "visual_manifest.json").read_text(
                     encoding="utf-8"
@@ -657,13 +678,29 @@ def _validate_v6_project(
             compiler._validate_v6_deconstruct_assets(
                 project_dir, expected, page_specs, visual
             )
-        else:
+        elif mode == "bitmap":
             compiler._validate_v6_bitmap_assets(
                 project_dir, expected, page_specs, blueprints
             )
     except Exception as exc:
         errors.append(f"V6 provenance/asset derivation validation failed: {exc}")
     return errors
+
+
+def _v63_delivery_assets(project: Path) -> list[tuple[Path, str]]:
+    """Use the actual scene asset ledger, not the legacy visual-plan inventory."""
+    ledger = json.loads((project / '.build/v63_asset_ledger.json').read_text(encoding='utf-8'))
+    result = []
+    root = (project / '.build/assets').resolve()
+    seen = set()
+    for record in ledger.get('assets', []):
+        path = (project / record['asset_path']).resolve()
+        if not path.is_relative_to(root) or not path.is_file() or sha256_file(path) != record.get('asset_sha256'):
+            raise ValueError('missing, outside-project, or changed crop')
+        relative = path.relative_to(root).as_posix()
+        if relative not in seen:
+            result.append((path, 'assets/' + relative)); seen.add(relative)
+    return result
 
 
 def package_v6_delivery(
@@ -697,8 +734,13 @@ def package_v6_delivery(
             if lock_path.is_file():
                 archive.write(lock_path, "formal_blueprint_manifest.json")
             if mode == "deconstruct":
+                if (project / '.build/v63_asset_ledger.json').is_file():
+                    for path, name in _v63_delivery_assets(project):
+                        archive.write(path, name)
+                    for name in ['v63_scene_graph.json', 'v63_visual_census.json', 'v63_asset_ledger.json']:
+                        archive.write(project / '.build' / name, name)
                 manifest_path = project / ".build" / "visual_manifest.json"
-                if manifest_path.is_file():
+                if manifest_path.is_file() and not (project / '.build/v63_asset_ledger.json').is_file():
                     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                     for slide_id, page in manifest.get("pages", {}).items():
                         if not isinstance(page, dict):

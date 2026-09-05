@@ -813,6 +813,17 @@ def prepare_visual_review(project_dir: str | Path) -> dict:
         result["pipeline_revision"] = "6.0.0"
         result["construction_mode"] = "deconstruct"
         _write_json_atomic(project / ".build" / "visual_review_tiles.json", result)
+        v63 = _load_module(
+            "standard_report_v63_prepare_visual_review",
+            Path(__file__).with_name("v63_visual_tiles.py"),
+        ).generate_review_tiles(project)
+        result["v63_visual_review_tiles"] = {
+            "path": ".build/v63_visual_review_tiles.json",
+            "deconstruction_runtime_revision": v63[
+                "deconstruction_runtime_revision"
+            ],
+            "page_count": len(v63.get("pages", {})),
+        }
         return result
     if (
         brief.get("schema_version") != "5.9"
@@ -995,6 +1006,16 @@ def _validate_v6_deconstruct_alignment(
         raise ValueError(
             "V6 deconstruction visual review failed: " + "; ".join(errors)
         )
+
+
+def _uses_v63_deconstruction(project: Path, brief: dict[str, Any]) -> bool:
+    return (
+        brief.get("schema_version") == "6.0"
+        and brief.get("pipeline_revision") == "6.0.0"
+        and brief.get("construction_mode") == "deconstruct"
+        and (project / ".build" / "v63_visual_census.json").is_file()
+        and (project / ".build" / "v63_scene_graph.json").is_file()
+    )
 
 
 def _materialize_v583_if_present(project_dir: Path) -> None:
@@ -1239,8 +1260,9 @@ def prebuild_project(
             Path(__file__).with_name("v6_blueprint_gate.py"),
         )
         mode = str(brief.get("construction_mode", ""))
+        uses_v63 = _uses_v63_deconstruction(project_dir, brief)
         gate.assert_blueprint_gate(
-            project_dir, require_alignment=mode == "deconstruct"
+            project_dir, require_alignment=mode == "deconstruct" and not uses_v63
         )
         _materialize_v6_formal_blueprint_manifest(project_dir, brief)
         runtime = _read_json(project_dir / ".build" / "runtime_report.json")
@@ -1263,6 +1285,28 @@ def prebuild_project(
                 "status": "pass",
                 "blockers": [],
             }
+        elif mode == "deconstruct" and uses_v63:
+            report = _load_module(
+                "standard_report_v63_deconstruction_prebuild",
+                Path(__file__).with_name("v63_deconstruction.py"),
+            ).prepare_deconstruction(
+                project_dir,
+                backend=backend,
+                template_path=Path(__file__).resolve().parents[1]
+                / "assets"
+                / "company_template.pptx",
+            )
+            _write_json_atomic(
+                project_dir / ".build" / "deconstruction_precheck.json", report
+            )
+            if not report.get("ok"):
+                raise ValueError(
+                    "V6.3 deconstruction prebuild failed: "
+                    + "; ".join(
+                        str(item.get("message", item))
+                        for item in report.get("blockers", [])
+                    )
+                )
         elif mode == "deconstruct":
             alignment_payload = _read_json(
                 project_dir / ".build" / "blueprint_alignment.json"
@@ -1607,6 +1651,12 @@ def _bitmap_render_environment(
     env = dict(os.environ if base_env is None else base_env)
     python = Path(executable or sys.executable).resolve()
     dependencies = python.parent.parent
+    # A system Python can provide pywin32 while the desktop runtime separately
+    # provides Node. Discover that installed bundle without changing global env.
+    bundled = Path.home() / '.cache' / 'codex-runtimes' / 'codex-primary-runtime' / 'dependencies'
+    node_name = 'node.exe' if os.name == 'nt' else 'node'
+    if not (dependencies / 'node' / 'bin' / node_name).is_file() and (bundled / 'node' / 'bin' / node_name).is_file():
+        dependencies = bundled
     node = dependencies / "node" / "bin" / ("node.exe" if os.name == "nt" else "node")
     modules = dependencies / "node" / "node_modules"
     override = dependencies / "bin" / "override"
@@ -1645,6 +1695,27 @@ def _audit_ok(path: Path) -> bool:
     except (OSError, ValueError, json.JSONDecodeError):
         return False
     return bool(value.get("ok", value.get("passed", False)))
+
+
+def _render_windows_post_lock(project: Path, output: Path, page_count: int, mode: str) -> dict:
+    """One external render; bitmap may recover via native export, never rebuild."""
+    try:
+        _run([sys.executable, str(Path(__file__).with_name('render_slides.py')),
+              str(output), '--project', str(project), '--expected', str(page_count), '--timeout', '45'],
+             timeout=180, env=_windows_render_environment_for_mode(mode))
+        result = {'ok': True, 'status': 'pass', 'renderer': 'bundled_artifact_tool', 'visual_verification': True}
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        if mode != 'bitmap':
+            raise
+        failure = str(getattr(exc, 'stderr', None) or getattr(exc, 'stdout', None) or exc)
+        _write_json_atomic(project / '.build/windows_render_recovery.json',
+                           {'status': 'native_export_pending', 'initial_error': failure, 'build_repeated': False})
+        renderer = _load_module('v631_bitmap_native_export', Path(__file__).with_name('v63_windows_scene_renderer.py'))
+        result = renderer.render_deck(output, project, expected_page_count=page_count)
+        result['initial_renderer_error'] = failure
+        result['build_repeated'] = False
+        _write_json_atomic(project / '.build/windows_render_recovery.json', result)
+    return result
 
 
 def _audit_matches_pptx(audit_path: str | Path, pptx_path: str | Path) -> bool:
@@ -2058,6 +2129,84 @@ def _assert_v6_repair_contract_unchanged(
         )
 
 
+def _v63_refinement_contract_snapshot(project: Path) -> dict[str, str | None]:
+    """Lock upstream, blueprint, census, and authored text during one body refinement."""
+
+    fixed = {
+        "project_brief.json",
+        ".build/slides.json",
+        ".build/formal_blueprint_manifest.json",
+        ".build/v63_visual_review_tiles.json",
+        ".build/v63_source_body_rois.json",
+    }
+    census_path = project / '.build/v63_visual_census.json'
+    original_path = project / '.build/v63_census_original.json'
+    if census_path.is_file() and not original_path.is_file():
+        _write_json_atomic(original_path, _read_json(census_path))
+    fixed.add('.build/v63_census_original.json')
+    fixed.update(
+        path.relative_to(project).as_posix()
+        for pattern in (
+            "blueprints/S[0-9][0-9].png",
+            ".build/design_drafts/S[0-9][0-9].png",
+        )
+        for path in project.glob(pattern)
+    )
+    return {
+        relative: (
+            _sha256_file(project / relative)
+            if (project / relative).is_file()
+            else None
+        )
+        for relative in sorted(fixed)
+    }
+
+
+def _assert_v63_refinement_contract_unchanged(
+    project: Path, expected: Any
+) -> None:
+    if not isinstance(expected, dict):
+        raise ValueError("V6.3 refinement contract snapshot is missing")
+    actual = _v63_refinement_contract_snapshot(project)
+    changed = sorted(
+        relative
+        for relative in set(expected) | set(actual)
+        if expected.get(relative) != actual.get(relative)
+    )
+    if changed:
+        raise ValueError(
+            "V6.3 refinement changed locked upstream inputs: " + ", ".join(changed)
+        )
+
+
+def _assert_v6_repair_inputs_unchanged(
+    project: Path,
+    *,
+    construction_mode: str,
+    previous: dict[str, Any],
+    uses_v63: bool,
+) -> None:
+    if uses_v63:
+        original = project / '.build/v63_census_original.json'
+        current = project / '.build/v63_visual_census.json'
+        if original.is_file() and current.is_file() and _read_json(original) != _read_json(current):
+            amendments = project / '.build/v63_census_amendments.json'
+            changes = _read_json(amendments).get('changes', []) if amendments.is_file() else []
+            module = _load_module('v631_census_amendment', Path(__file__).with_name('v63_visual_census.py'))
+            errors = module.validate_census_amendment(_read_json(original), _read_json(current), changes)
+            if errors:
+                raise ValueError('V63_CENSUS_AMENDMENT_INVALID: ' + json.dumps(errors, ensure_ascii=False))
+        _assert_v63_refinement_contract_unchanged(
+            project, previous.get("repair_contract_snapshot")
+        )
+        return
+    _assert_v6_repair_contract_unchanged(
+        project,
+        construction_mode,
+        previous.get("repair_contract_snapshot"),
+    )
+
+
 def _resolve_v6_output_path(
     project_dir: Path,
     output_path: str | Path | None,
@@ -2110,6 +2259,64 @@ def _run_v6_windows_deconstruct_fidelity_audit(
     return report
 
 
+def _package_v631_result(project: Path, output: Path, result: dict) -> dict:
+    """Packaging can resume independently; never mislabel a ZIP failure as success."""
+    result.update(ok=True, pptx_accepted=True, delivery_status='pending')
+    result.pop('delivery_error', None)
+    _write_json_atomic(project / '.build/pipeline_result.json', result)
+    try:
+        packager = _load_module('v631_final_package', Path(__file__).with_name('pack_delivery.py'))
+        delivery = project / 'output' / f'{project.name}_解构版.zip'
+        result['delivery'] = str(packager.package_v6_delivery(project, output, project / 'generate_deck.py', delivery))
+    except Exception as exc:
+        result.update(ok=False, status='delivery_failed', delivery_status='failed', delivery_error=str(exc))
+        _write_json_atomic(project / '.build/pipeline_result.json', result)
+        raise
+    result.update(ok=True, status='success', delivery_status='packaged')
+    _write_json_atomic(project / '.build/pipeline_result.json', result)
+    return result
+
+
+def _finish_v631_review(project_dir: Path, brief: dict[str, Any], output: Path, *, auto_package: bool) -> dict[str, Any]:
+    """Resume an internal review checkpoint without another COM build."""
+    pending = _read_json(project_dir / '.build/v63_pending_review.json')
+    module = _load_module('v631_finalizer', Path(__file__).with_name('v63_acceptance.py'))
+    if pending['bindings'] != module.visual_bindings(project_dir, output):
+        raise ValueError('V63_PENDING_REVIEW_INPUTS_CHANGED')
+    final = module.finalize_visual_review(project_dir, output, build_attempt=pending['attempt_count'],
+        audit=pending['audit'], render_result=pending['render'], fidelity_report=pending.get('fidelity'))
+    action = final['delta']['action']
+    statuses = {'awaiting_visual_review': 'awaiting_visual_review', 'targeted_refinement': 'refinement_required',
+                'block': 'catastrophic_failed', 'deliver': 'success', 'deliver_with_warnings': 'success'}
+    attempt = _read_json(project_dir / '.build/v6_build_attempt.json')
+    attempt.update(status=statuses[action], pptx_sha256=_sha256_file(output))
+    if action in {'targeted_refinement', 'block'}:
+        attempt['repair_contract_snapshot'] = _v63_refinement_contract_snapshot(project_dir)
+    _write_json_atomic(project_dir / '.build/v6_build_attempt.json', attempt)
+    result = {'schema_version': '6.0', 'pipeline_revision': '6.0.0', 'skill_version': '6.3.1',
+              'production_mode': 'blueprint', 'construction_mode': 'deconstruct',
+              'builder_backend': attempt['builder_backend'], 'pages': brief['requested_page_count'],
+              'ok': final['acceptance']['accepted'], 'status': statuses[action], 'pptx': str(output),
+              'pptx_sha256': _sha256_file(output), 'build_attempt': attempt['attempt_count'],
+              'render_status': pending['render'].get('status'), 'visual_verification': pending['render'].get('visual_verification'),
+              'visual_acceptance_passed': final['delta']['visual_acceptance_passed'],
+              'refinement_allowed': final['delta']['refinement_allowed'],
+              'postbuild_audit': str(project_dir / '.build/deconstruction_editability_audit.json'),
+              'deconstruction_acceptance': str(project_dir / '.build/deconstruction_acceptance.json'),
+              'visual_delta': str(project_dir / '.build/v63_visual_delta.json')}
+    if result['ok']:
+        contracts = _load_module('v631_final_cache', Path(__file__).with_name('v6_contracts.py'))
+        hashes = {p.stem: _sha256_file(p) for p in (project_dir / 'blueprints').glob('S*.png')}
+        cache = contracts.v63_post_lock_cache_payload(brief, attempt['builder_backend'], hashes)
+        cache['visual_input_bindings'] = pending['bindings']
+        cache['fingerprint_sha256'] = hashlib.sha256(json.dumps(cache, sort_keys=True).encode()).hexdigest()
+        _write_json_atomic(project_dir / '.build/v6_cache_fingerprint.json', cache)
+    _write_json_atomic(project_dir / '.build/pipeline_result.json', result)
+    if result['ok'] and auto_package:
+        _package_v631_result(project_dir, output, result)
+    return result
+
+
 def _run_v6_project(
     project_dir: Path,
     brief: dict[str, Any],
@@ -2123,6 +2330,7 @@ def _run_v6_project(
         raise ValueError("V6 user revisions require a new explicit project run")
     mode = str(brief["construction_mode"])
     output = _resolve_v6_output_path(project_dir, output_path, mode)
+    uses_v63 = _uses_v63_deconstruction(project_dir, brief)
     bitmap_release = None
     if mode == "bitmap":
         bitmap_release = _load_module(
@@ -2141,19 +2349,28 @@ def _run_v6_project(
     attempt_path = project_dir / ".build" / "v6_build_attempt.json"
     previous = _read_json(attempt_path) if attempt_path.is_file() else {}
     previous_count = int(previous.get("attempt_count", 0))
+    if uses_v63 and previous.get('status') == 'awaiting_visual_review' and not catastrophic_repair:
+        return _finish_v631_review(project_dir, brief, output, auto_package=auto_package)
     if (
         not catastrophic_repair
         and mode == "deconstruct"
-        and previous_count == 1
+        and (previous_count in {1, 2} if uses_v63 else previous_count == 1)
         and previous.get("status") == "success"
     ):
-        acceptance_module = _load_module(
-            "standard_report_v61_deconstruction_acceptance_reuse",
-            Path(__file__).with_name("v61_deconstruction_acceptance.py"),
-        )
-        acceptance = acceptance_module.locked_deconstruction_acceptance(
-            project_dir, output
-        )
+        if uses_v63:
+            acceptance_module = _load_module(
+                "standard_report_v63_deconstruction_acceptance_reuse",
+                Path(__file__).with_name("v63_acceptance.py"),
+            )
+            acceptance = acceptance_module.locked_v63_acceptance(project_dir, output)
+        else:
+            acceptance_module = _load_module(
+                "standard_report_v61_deconstruction_acceptance_reuse",
+                Path(__file__).with_name("v61_deconstruction_acceptance.py"),
+            )
+            acceptance = acceptance_module.locked_deconstruction_acceptance(
+                project_dir, output
+            )
         result_path = project_dir / ".build" / "pipeline_result.json"
         if acceptance is not None and result_path.is_file():
             result = _read_json(result_path)
@@ -2165,6 +2382,8 @@ def _run_v6_project(
             )
             if auto_package:
                 delivery = Path(str(result.get("delivery", "")))
+                if uses_v63 and (not delivery.is_file() or result.get('delivery_status') == 'failed'):
+                    return _package_v631_result(project_dir, output, result)
                 if not delivery.is_file():
                     packager = _load_module(
                         "standard_report_v6_packager_cached_deconstruction",
@@ -2184,12 +2403,17 @@ def _run_v6_project(
             _write_json_atomic(result_path, result)
             return result
     if catastrophic_repair:
-        if (
-            previous_count != 1
-            or previous.get("status") != "catastrophic_failed"
+        v63_visual_refinement = (
+            uses_v63
+            and previous_count == 1
+            and previous.get("status") == "refinement_required"
+        )
+        if previous_count != 1 or (
+            previous.get("status") != "catastrophic_failed"
+            and not v63_visual_refinement
         ):
             raise ValueError(
-                "V6 repair requires one catastrophic first-attempt failure"
+                "V6 repair requires one catastrophic failure or one V6.3 visual refinement"
             )
         if previous.get("construction_mode") != brief.get("construction_mode"):
             raise ValueError("V6 repair cannot change construction mode")
@@ -2201,10 +2425,11 @@ def _run_v6_project(
             raise ValueError(
                 "V6.2.1 bitmap repair denied: only one recorded catastrophic repair is allowed"
             )
-        _assert_v6_repair_contract_unchanged(
+        _assert_v6_repair_inputs_unchanged(
             project_dir,
-            str(brief["construction_mode"]),
-            previous.get("repair_contract_snapshot"),
+            construction_mode=str(brief["construction_mode"]),
+            previous=previous,
+            uses_v63=uses_v63,
         )
         attempt_count = 2
     else:
@@ -2231,6 +2456,8 @@ def _run_v6_project(
         "imagegen_reused": True,
         "status": "in_progress",
     }
+    if uses_v63:
+        attempt['visual_refinement_count'] = int(previous.get('visual_refinement_count', 0)) + int(previous.get('status') == 'refinement_required' and catastrophic_repair)
     _write_json_atomic(attempt_path, attempt)
 
     def guarded(stage_name: str, action: Callable[[], Any]) -> Any:
@@ -2247,11 +2474,16 @@ def _run_v6_project(
                     "status": "catastrophic_failed",
                     "failed_stage": stage_name,
                     "error": str(exc),
-                    "repair_contract_snapshot": _v6_repair_contract_snapshot(
-                        project_dir, mode
+                    "repair_contract_snapshot": (
+                        _v63_refinement_contract_snapshot(project_dir)
+                        if uses_v63
+                        else _v6_repair_contract_snapshot(project_dir, mode)
                     ),
                 }
             )
+            if uses_v63 and stage_name in {'preprocess_plan', 'prebuild_validate', 'compile', 'windows_runtime'}:
+                failed['attempt_count'] = previous_count
+                failed['status'] = previous.get('status', 'precheck_failed')
             _write_json_atomic(attempt_path, failed)
             if bitmap_release is not None:
                 bitmap_release.write_catastrophic_failure(
@@ -2262,20 +2494,40 @@ def _run_v6_project(
                 )
             raise
 
-    batch_plan, reusable_slides = guarded(
-        "preprocess_plan",
-        lambda: _v6_preprocess_batches(project_dir, brief, backend),
-    )
-    preprocessed_slides = guarded(
-        "preprocess_batches",
-        lambda: _execute_v6_preprocess_batches(
-            project_dir,
-            brief,
-            backend,
-            batch_plan,
-            reusable_slides,
-        ),
-    )
+    if uses_v63:
+        batch_plan = {
+            "schema_version": "6.3",
+            "deconstruction_runtime_revision": "6.3.1",
+            "construction_mode": "deconstruct",
+            "builder_backend": backend,
+            "recovery_scope": "post_lock_scene_graph",
+            "whole_deck_build_batched": False,
+            "whole_deck_build_status": "pending",
+            "batches": [],
+        }
+        guarded(
+            "preprocess_plan",
+            lambda: _write_json_atomic(
+                project_dir / ".build" / "v6_batch_plan.json", batch_plan
+            ),
+        )
+        reusable_slides = set()
+        preprocessed_slides = set()
+    else:
+        batch_plan, reusable_slides = guarded(
+            "preprocess_plan",
+            lambda: _v6_preprocess_batches(project_dir, brief, backend),
+        )
+        preprocessed_slides = guarded(
+            "preprocess_batches",
+            lambda: _execute_v6_preprocess_batches(
+                project_dir,
+                brief,
+                backend,
+                batch_plan,
+                reusable_slides,
+            ),
+        )
     guarded(
         "prebuild_validate",
         lambda: _stage(
@@ -2314,35 +2566,35 @@ def _run_v6_project(
         ),
     )
     guarded("build", lambda: _mark_v6_whole_deck_built(project_dir))
-    if backend == "windows_com_v584":
-        guarded(
+    if backend == "windows_com_v584" and uses_v63:
+        renderer = guarded(
+            "render",
+            lambda: _load_module(
+                "standard_report_v63_windows_render",
+                Path(__file__).with_name("v63_windows_scene_renderer.py"),
+            ),
+        )
+        render_result = guarded(
             "render",
             lambda: _stage(
                 project_dir,
                 "render",
-                lambda: _run(
-                    [
-                        sys.executable,
-                        str(Path(__file__).with_name("render_slides.py")),
-                        str(output),
-                        "--project",
-                        str(project_dir),
-                        "--expected",
-                        str(brief["requested_page_count"]),
-                        "--timeout",
-                        "45",
-                    ],
-                    timeout=180,
-                    env=_windows_render_environment_for_mode(mode),
+                lambda: renderer.render_deck(
+                    output,
+                    project_dir,
+                    expected_page_count=int(brief["requested_page_count"]),
                 ),
             ),
         )
-        render_result = {
-            "ok": True,
-            "status": "pass",
-            "renderer": "powerpoint_windows",
-            "visual_verification": True,
-        }
+    elif backend == "windows_com_v584":
+        render_result = guarded(
+            "render",
+            lambda: _stage(
+                project_dir,
+                "render",
+                lambda: _render_windows_post_lock(project_dir, output, int(brief['requested_page_count']), mode),
+            ),
+        )
     else:
         renderer = guarded(
             "render",
@@ -2412,14 +2664,40 @@ def _run_v6_project(
                 brief,
             ),
         )
-    audit_module = guarded(
-        "postbuild_audit",
-        lambda: _load_module(
-            "standard_report_v6_postbuild_editability",
-            Path(__file__).with_name("v6_editability_audit.py"),
-        ),
-    )
-    if mode == "deconstruct":
+    if uses_v63:
+        acceptance_module = guarded(
+            "postbuild_audit",
+            lambda: _load_module(
+                "standard_report_v63_postbuild_acceptance",
+                Path(__file__).with_name("v63_acceptance.py"),
+            ),
+        )
+        audit = guarded(
+            "postbuild_audit",
+            lambda: acceptance_module.audit_v63_pptx(
+                output,
+                project_dir,
+                template_path=Path(__file__).resolve().parents[1]
+                / "assets"
+                / "company_template.pptx",
+            ),
+        )
+        audit_path = project_dir / ".build" / "deconstruction_editability_audit.json"
+        precheck = guarded(
+            "postbuild_audit",
+            lambda: _read_json(
+                project_dir / ".build" / "v63_deconstruction_precheck.json"
+            ),
+        )
+    else:
+        audit_module = guarded(
+            "postbuild_audit",
+            lambda: _load_module(
+                "standard_report_v6_postbuild_editability",
+                Path(__file__).with_name("v6_editability_audit.py"),
+            ),
+        )
+    if mode == "deconstruct" and not uses_v63:
         precheck = guarded(
             "postbuild_audit",
             lambda: _read_json(
@@ -2439,7 +2717,7 @@ def _run_v6_project(
             ),
         )
         audit_path = project_dir / ".build" / "deconstruction_editability_audit.json"
-    else:
+    elif mode == "bitmap":
         audit = guarded(
             "postbuild_audit",
             lambda: audit_module.audit_bitmap_pptx(
@@ -2477,39 +2755,80 @@ def _run_v6_project(
         )
     acceptance = None
     acceptance_path = None
-    if mode == "deconstruct":
-        acceptance_module = guarded(
-            "deconstruction_acceptance",
+    visual_delta = None
+    if uses_v63:
+        graph = _read_json(project_dir / '.build/v63_scene_graph.json')
+        if any(p.get('coordinate_mode') == 'source_pixels_contain' for p in graph['pages'].values()):
+            pending = {'attempt_count': attempt_count, 'audit': audit, 'render': render_result,
+                       'fidelity': fidelity_report, 'bindings': acceptance_module.visual_bindings(project_dir, output)}
+            _write_json_atomic(project_dir / '.build/v63_pending_review.json', pending)
+            return _finish_v631_review(project_dir, brief, output, auto_package=auto_package)
+        delta_module = guarded(
+            "visual_delta",
             lambda: _load_module(
-                "standard_report_v61_deconstruction_acceptance",
-                Path(__file__).with_name("v61_deconstruction_acceptance.py"),
+                "standard_report_v63_visual_delta",
+                Path(__file__).with_name("v63_visual_delta.py"),
             ),
         )
-        acceptance = guarded(
-            "deconstruction_acceptance",
-            lambda: acceptance_module.evaluate_deconstruction_acceptance(
-                project_dir=project_dir,
-                pptx_path=output,
-                brief=brief,
-                builder_backend=backend,
-                precheck=precheck,
-                editability_audit=audit,
-                render_result=render_result,
+        visual_delta = guarded(
+            "visual_delta",
+            lambda: delta_module.evaluate_visual_delta(
+                build_attempt=attempt_count,
+                structural_ok=bool(audit.get("ok")),
                 fidelity_report=fidelity_report,
             ),
         )
-        acceptance_path = guarded(
-            "deconstruction_acceptance",
-            lambda: acceptance_module.write_deconstruction_acceptance(
-                project_dir, acceptance
-            ),
+        guarded(
+            "visual_delta",
+            lambda: delta_module.write_visual_delta(project_dir, visual_delta),
         )
+    if mode == "deconstruct":
+        if uses_v63:
+            acceptance = guarded(
+                "deconstruction_acceptance",
+                lambda: acceptance_module.evaluate_v63_acceptance(
+                    project_dir,
+                    output,
+                    audit,
+                    render_result,
+                    visual_delta,
+                ),
+            )
+            acceptance_path = project_dir / ".build" / "deconstruction_acceptance.json"
+        else:
+            acceptance_module = guarded(
+                "deconstruction_acceptance",
+                lambda: _load_module(
+                    "standard_report_v61_deconstruction_acceptance",
+                    Path(__file__).with_name("v61_deconstruction_acceptance.py"),
+                ),
+            )
+            acceptance = guarded(
+                "deconstruction_acceptance",
+                lambda: acceptance_module.evaluate_deconstruction_acceptance(
+                    project_dir=project_dir,
+                    pptx_path=output,
+                    brief=brief,
+                    builder_backend=backend,
+                    precheck=precheck,
+                    editability_audit=audit,
+                    render_result=render_result,
+                    fidelity_report=fidelity_report,
+                ),
+            )
+            acceptance_path = guarded(
+                "deconstruction_acceptance",
+                lambda: acceptance_module.write_deconstruction_acceptance(
+                    project_dir, acceptance
+                ),
+            )
         if not acceptance.get("accepted"):
             guarded(
                 "deconstruction_acceptance",
                 lambda: (_ for _ in ()).throw(
                     ValueError(
-                        "V6.1 deconstruction acceptance failed: "
+                        ("V6.3" if uses_v63 else "V6.1")
+                        + " deconstruction acceptance failed: "
                         + "; ".join(
                             str(item.get("message", item))
                             for item in acceptance.get("blockers", [])
@@ -2526,13 +2845,19 @@ def _run_v6_project(
     )
 
     def finalize_cache() -> dict[str, Any]:
-        cache = contracts.post_lock_cache_payload(brief, backend)
-        cache["blueprint_hashes"] = {
+        blueprint_hashes = {
             f"S{index:02d}": _sha256_file(
                 project_dir / "blueprints" / f"S{index:02d}.png"
             )
             for index in range(1, int(brief["requested_page_count"]) + 1)
         }
+        if uses_v63:
+            cache = contracts.v63_post_lock_cache_payload(
+                brief, backend, blueprint_hashes
+            )
+        else:
+            cache = contracts.post_lock_cache_payload(brief, backend)
+            cache["blueprint_hashes"] = blueprint_hashes
         cache["fingerprint_sha256"] = hashlib.sha256(
             json.dumps(cache, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
@@ -2545,7 +2870,9 @@ def _run_v6_project(
     result = {
         "schema_version": "6.0",
         "pipeline_revision": "6.0.0",
-        "skill_version": "6.2.2" if mode == "deconstruct" else "6.0.1",
+        "skill_version": (
+            "6.3.1" if uses_v63 else ("6.2.2" if mode == "deconstruct" else "6.0.1")
+        ),
         "production_mode": "blueprint",
         "construction_mode": mode,
         "builder_backend": backend,
@@ -2564,6 +2891,14 @@ def _run_v6_project(
         "visual_verification": bool(render_result.get("visual_verification")),
         "deconstruction_acceptance": (
             str(acceptance_path) if acceptance_path is not None else None
+        ),
+        "visual_delta": (
+            str(project_dir / ".build" / "v63_visual_delta.json")
+            if visual_delta is not None
+            else None
+        ),
+        "refinement_allowed": bool(
+            visual_delta and visual_delta.get("refinement_allowed")
         ),
     }
     if bitmap_release is not None:
@@ -2588,9 +2923,20 @@ def _run_v6_project(
     successful_attempt = dict(attempt)
     successful_attempt.update(
         {
-            "status": "success",
+            "status": (
+                "refinement_required"
+                if visual_delta
+                and visual_delta.get("action") == "targeted_refinement"
+                else "success"
+            ),
             "pptx_sha256": result["pptx_sha256"],
             "postbuild_audit": str(audit_path),
+            "repair_contract_snapshot": (
+                _v63_refinement_contract_snapshot(project_dir)
+                if visual_delta
+                and visual_delta.get("action") == "targeted_refinement"
+                else None
+            ),
         }
     )
     guarded(

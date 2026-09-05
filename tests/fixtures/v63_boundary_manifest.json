@@ -1,0 +1,22 @@
+{
+  "base_commit": "d3c9103841e59e50de801a472055b49758ddb4a6",
+  "pre_blueprint": {
+    "prompts/page_outline_prompt.md": "34c6b589461849d749fccc5009d54b73e4f3e24359e0e44450902b79d59c8709",
+    "prompts/imagegen_blueprint_prompt.md": "333b68c57240704baa5695900ee8bff4cc4c3ffe69310c0e04ccde0b4fc88526",
+    "prompts/v6_pre_imagegen_freedom_prompt.md": "34b8802c372d4dbd064f21241f6c243a9bc387058f2467fab68133c83871ef5e",
+    "references/company_visual_system.md": "e97fa87a58255f008d666b6f9e50fdebc661752edc2110a81f9d5a7e0c37cfec",
+    "references/layout_and_chart_rules.md": "99585552ab2b94e74debdad110030203e1224bb63d420a3792e2ebec32222b44",
+    "scripts/v58_source_cache.py": "0f8a84230be8f01def40c373995157890cea8c7e0c2ad37dbfa79cb80e6395bf",
+    "scripts/v583_source_ingest.py": "a15de512e51187024ce21548251caddaafe3678205192167af35b81d2ce600fa",
+    "scripts/v583_authoring.py": "e0b3c556f8debf2d9a4111c58a0b7fdfc0813af7ff1f6137bfd911013586065d",
+    "scripts/v58_visual_policy.py": "a58f9361f747d4a3c7262dda483e4abdf7ef61c1dbaf36908b0638f98117bab4",
+    "scripts/v59_blueprint_gate.py": "f8a737f0051e0e011600439edb0c9577922cf9885c90ed6b55eeb9e966a58293",
+    "scripts/compose_blueprint.py": "5b313f2ed90b2c08aae212f4ecbcadc2468d04a21afa4ee786acf73b7ef03d65"
+  },
+  "bitmap_only": {
+    "prompts/bitmap_alignment_prompt.md": "5c0b82571951f68d54006c6912165da399ba805fb31df1fcf4d1ce2ad8b24e0a",
+    "scripts/v6_bitmap.py": "c52251659ef91489a4e7ee7f6b2706da33f2003c44b265abcf130d831d40a1a2",
+    "scripts/v62_bitmap_acceptance.py": "e960351ec1c27995a29580913f70a94aab1c49ea1aaf3cdda3793ac15c932342",
+    "assets/company_template.pptx": "591551aa5d9bb2c8d256943ddb381244a34b0f855504af50d0edd9b0ef5c2918"
+  }
+}

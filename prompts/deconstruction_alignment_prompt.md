@@ -1,5 +1,14 @@
 # V6 deconstruction alignment contract
 
+## V6.3 routing note
+
+For a V6.3 post-lock project, this legacy alignment contract is diagnostic only.
+Generate the overlapping full-body review set, independent
+`v63_visual_census.json`, atomic `v63_scene_graph.json`, and local crop ledger.
+Do not translate the body into legacy matrix, flow, text-card, or fixed-palette
+components. Preserve the five template placeholders and update their text only.
+The blueprint body remains the visual authority on both Windows and macOS.
+
 Use only after the immutable `blueprints/SNN.png` files have been locked and the
 full page plus Q1–Q4 visual review has been inspected. Do not regenerate,
 retouch, repaint, or replace a blueprint.

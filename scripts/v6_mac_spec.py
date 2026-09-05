@@ -12,6 +12,20 @@ SCHEMA_VERSION = "6.0"
 PIPELINE_REVISION = "6.0.0"
 BUILDER_BACKEND = "mac_python_pptx_v2"
 ERROR_UNSUPPORTED = "MAC_RECONSTRUCTION_UNSUPPORTED"
+V63_ATOMIC_TYPES = frozenset(
+    {
+        "text",
+        "rect",
+        "round_rect",
+        "ellipse",
+        "freeform",
+        "line",
+        "connector",
+        "arrow",
+        "image_crop",
+        "group",
+    }
+)
 
 DECONSTRUCT_TYPES = frozenset(
     {
@@ -182,6 +196,56 @@ class MacSpecError(ValueError):
             for item in issues
         )
         super().__init__(f"{ERROR_UNSUPPORTED}: {details}")
+
+
+def normalize_v63_scene_graph(
+    scene_graph: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Validate the shared V6.3 IR without redesigning it for macOS."""
+
+    normalized = deepcopy(scene_graph)
+    blockers: list[dict[str, Any]] = []
+    if (
+        not isinstance(scene_graph, dict)
+        or scene_graph.get("schema_version") != "6.3"
+        or scene_graph.get("deconstruction_runtime_revision") != "6.3.1"
+        or scene_graph.get("color_authority") != "blueprint_body"
+        or not isinstance(scene_graph.get("pages"), dict)
+    ):
+        blockers.append(_issue("", "", "invalid V6.3 shared scene header"))
+    for slide_id, page in scene_graph.get("pages", {}).items():
+        elements = page.get("elements", []) if isinstance(page, dict) else []
+        if not isinstance(elements, list):
+            blockers.append(_issue(str(slide_id), "", "scene elements must be a list"))
+            continue
+        for element in elements:
+            element_id = str(element.get("element_id", "")) if isinstance(element, dict) else ""
+            kind = element.get("type") if isinstance(element, dict) else None
+            if kind not in V63_ATOMIC_TYPES:
+                blockers.append(
+                    _issue(str(slide_id), element_id, f"unsupported V6.3 atom {kind!r}")
+                )
+            elif kind == "freeform" and (
+                not isinstance(element.get("points_px"), list)
+                or len(element["points_px"]) < (3 if element.get('closed', True) else 2)
+            ):
+                blockers.append(
+                    _issue(str(slide_id), element_id, "freeform requires at least three points")
+                )
+    report = {
+        "schema_version": "6.3",
+        "pipeline_revision": PIPELINE_REVISION,
+        "deconstruction_runtime_revision": "6.3.1",
+        "construction_mode": "deconstruct",
+        "builder_backend": BUILDER_BACKEND,
+        "ok": not blockers,
+        "status": "pass" if not blockers else "blocked",
+        "mac_native_render_unverified": True,
+        "blockers": blockers,
+    }
+    if blockers:
+        raise MacSpecError(blockers, "deconstruct")
+    return normalized, report
 
 
 def _write_json_atomic(path: Path, value: Any) -> None:

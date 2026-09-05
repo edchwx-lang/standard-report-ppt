@@ -5,6 +5,8 @@ import importlib.util
 import unittest
 from pathlib import Path
 
+from tests.boundary_hash import frozen_sha256
+
 
 SKILL = Path(__file__).resolve().parents[1]
 FROZEN_SHA256 = {
@@ -51,7 +53,7 @@ def load_module(name: str, path: Path):
 class V594BoundaryTests(unittest.TestCase):
     def test_pre_blueprint_files_are_byte_identical_to_v592(self):
         actual = {
-            relative: sha256_bytes((SKILL / relative).read_bytes())
+            relative: frozen_sha256(SKILL / relative)
             for relative in FROZEN_SHA256
         }
         self.assertEqual(FROZEN_SHA256, actual)

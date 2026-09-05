@@ -3,7 +3,64 @@ name: standard-report-ppt
 description: Use when Codex needs to create, revise, reconstruct, or automate a company fixed-template consulting PowerPoint deck from documents, notes, data, an existing PPTX, or visual references.
 ---
 
-# Standard Report PPT V6.2.2
+# Standard Report PPT V6.3.1
+
+发布补丁说明见 `docs/releases/v6.3.1.md`。下述 V6.3.1 后锁定规则优先于
+后文历史兼容说明：解构打包使用 V6.3 验收/编译协议与真实资产账本；打包失败
+只恢复打包。位图裁切/布局保持原样，仅补后锁定预览运行时发现与一次原生导出
+恢复，不因外部预览器故障重新构建 PPT。蓝图生成前流程不变。
+
+## V6.3 visual reverse compiler（仅蓝图锁定后的解构路径）
+
+后锁定修复运行时为 `6.3.1`。进入此路径前读取
+`references/v63_visual_repair.md`、`prompts/v63_visual_census_prompt.md` 和
+`prompts/v63_scene_graph_prompt.md`，按其中的源主体定位、独立普查、素材分离和
+有界复核执行；这些规则不参与蓝图生成前或位图模式。
+
+V6.3 只修改正式蓝图字节锁定后的 `construction_mode: "deconstruct"`
+路径；蓝图生成前、ImageGen 提示词与调用、正式蓝图字节、位图模式和旧版本
+兼容路径保持 V6.2.2 原样。解构的目标不是套用组件库，而是把主体蓝图作为
+视觉反向编译器的输入：主体蓝图是视觉最高权威，优先用可编辑对象还原它的
+真实构图、颜色、层级与内容。
+
+- 章节、页面标题、核心判断、资料来源、页码是五个母版占位符。必须保留原
+  占位符及其字体、字号、位置、填充、边框和段落设置，只根据原文替换文字；
+  不得删除后重建。主体区域才由蓝图反向编译。
+- 解构前先查看原图、记录真实源主体 ROI（不能由母版位置推算），再查看完整
+  主体和默认 3×2 重叠切片，先独立写入
+  `.build/v63_visual_census.json`，再将每个可见对象编译到
+  `.build/v63_scene_graph.json`。场景图只使用文字、矩形、圆角矩形、椭圆、
+  自由形状、线、连接线、箭头、局部图片和组等原子元素；禁止用通用矩阵、
+  卡片阵列或流程组件替换蓝图的实际版式。
+- 所有文字、数字、表格、图表和基础几何必须可编辑。照片、复杂 logo、地图、
+  插画和复杂图标可使用无文字的紧边界局部裁剪；logo 自带字样可保留。地图
+  标注、定位点和连接线等可编辑叠加物必须单独重建。完整主体截图、混合区域
+  截图、带可编辑正文的截图和带面板外框的截图均禁止。
+- Windows 继续使用 PowerPoint COM，每轮整份构建/保存一次，再原生渲染一次。
+  macOS 继续使用 python-pptx/OOXML 并消费同一场景图；不能表达的元素
+  必须显式报 `MAC_RECONSTRUCTION_UNSUPPORTED`，不可静默转成图片。Mac 结果
+  必须标记 `mac_native_render_unverified`，Windows 验证不代表 Mac 视觉一致。
+- 一次汇总的结构验收检查普查覆盖、场景元素、裁剪账本、五个母版占位符、
+  可编辑性和有效渲染。普通字体渲染、细小间距、抗锯齿、颜色采样和裁边差异
+  只作警告。首次出现明显主体视觉差异时最多一次定向主体重构；第二次结构
+  有效即带警告交付，不得进入第三次或反复检查循环。
+- 每个 Logo、小图标都单独登记；复杂地图默认保留真实地理底图裁剪，不能改成
+  示意多边形。旧标注必须从派生素材移除再用原生对象覆盖，不能叠字或留白洞。
+  源图不变；素材记录来源、局部蒙版/取色、输出哈希与实际插入对象。
+- 主体文本显式记录换行；数字/百分号不要自动断行。可按实际字体度量一次性
+  适配文本框并留存缩放记录，禁止改变母版字号或反复缩字重建。Mac 字体度量
+  不可验证时只记录 Office 自动适配请求，不声称与 Windows 渲染相同。
+- 原生渲染成功不等于视觉验收。当前 Agent 必须查看实际图片并填写逐对象、
+  哈希绑定的 `v63_visual_review.json`；`awaiting_visual_review` 是内部继续步骤，
+  不询问用户放行、不重开 COM。旧轮复核失效后只补本轮记录，不能因此重建。
+
+V6.3 的后锁定必需资源包括 `scripts/v63_skeleton_contract.py`、
+`scripts/v63_visual_tiles.py`、`scripts/v63_visual_census.py`、
+`scripts/v63_scene_graph.py`、`scripts/v63_extract_scene_assets.py`、
+`scripts/v63_deconstruction.py`、`scripts/v63_windows_scene_renderer.py`、
+`scripts/v63_mac_scene_renderer.py`、`scripts/v63_acceptance.py`、
+`scripts/v63_visual_delta.py`、`prompts/v63_visual_census_prompt.md` 和
+`prompts/v63_scene_graph_prompt.md` 和 `references/v63_visual_repair.md`。
 
 ## V6.2.2 prompt-freedom and deconstruction post-blueprint patch
 

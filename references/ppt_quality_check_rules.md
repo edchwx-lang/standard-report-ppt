@@ -1,5 +1,25 @@
 # PPT quality policy V6.0
 
+## V6.3 hard structural blockers
+
+Runtime `6.3.1` additionally requires source-ROI evidence, independent visual
+subjects and a review bound to the CURRENT scene/assets/render/PPT. See
+`v63_visual_repair.md`. Render success and object counts do not prove visual
+acceptance. `awaiting_visual_review` is an internal checkpoint, not a user gate.
+Stale prior-round review means pending evidence, never another build.
+
+Missing census objects, unresolved scene atoms, missing or garbled text/data,
+rasterized editable content, undeclared or stale crops, mixed/full-body
+screenshots, changed master placeholders, corrupt PPTX, and invalid render remain
+blocking after blueprint lock.
+
+## V6.3 ordinary visual warnings
+
+Minor spacing, font rendering, anti-aliasing, color-sampling, and uncontaminated
+crop-edge differences are warnings. A failed visual comparison may request one targeted body refinement.
+A second structurally valid build is delivered with
+warnings and cannot start a third reconstruction loop.
+
 V6 adds a mode-specific catastrophic gate. Deconstruction requires every
 expected element and selected text in OOXML, native editable table/chart/flow
 semantics, and no unapproved image covering 60% or more of the runtime body.

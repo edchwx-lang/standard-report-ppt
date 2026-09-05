@@ -451,6 +451,120 @@ def _bitmap_assets(
     return records
 
 
+def _compile_v63_mac_project(project: Path, brief: dict[str, Any]) -> Path:
+    """Compile the shared V6.3 scene graph for python-pptx without redesign."""
+
+    skill = Path(__file__).resolve().parents[1]
+    precheck = _required_json(project, ".build/v63_deconstruction_precheck.json")
+    if (
+        precheck.get("ok") is not True
+        or precheck.get("deconstruction_runtime_revision") != "6.3.1"
+        or precheck.get("builder_backend") != BUILDER_BACKEND
+    ):
+        raise ValueError(f"{ERROR_CONTRACT}: invalid V6.3 prebuild")
+    scene = _required_json(project, ".build/v63_scene_graph.json")
+    ledger = _required_json(project, ".build/v63_asset_ledger.json")
+    slides = _required_payload(project, ".build/slides.json")
+    if not isinstance(slides, list):
+        raise ValueError(f"{ERROR_CONTRACT}: slides must be a list")
+    expected = [
+        f"S{index:02d}"
+        for index in range(1, int(brief["requested_page_count"]) + 1)
+    ]
+    if sorted(scene.get("pages", {})) != expected:
+        raise ValueError(f"{ERROR_CONTRACT}: V6.3 scene page set")
+    if [item.get("slide_id") for item in slides] != expected:
+        raise ValueError(f"{ERROR_CONTRACT}: V6.3 slide order")
+    normalizer = _load_module(
+        "standard_report_v63_mac_scene_normalizer",
+        Path(__file__).with_name("v6_mac_spec.py"),
+    )
+    normalized, mac_report = normalizer.normalize_v63_scene_graph(scene)
+    if normalized != scene or not mac_report.get("ok"):
+        raise ValueError(f"{ERROR_UNSUPPORTED}: shared scene graph changed during normalization")
+    for asset in ledger.get("assets", []):
+        path = (project / str(asset.get("asset_path", ""))).resolve()
+        if (
+            project not in path.parents
+            or not path.is_file()
+            or asset.get("asset_sha256") != sha256_file(path)
+        ):
+            raise ValueError(f"{ERROR_ASSET}: {asset.get('asset_id')}")
+    template = (skill / "assets" / "company_template.pptx").resolve()
+    renderer = (skill / "scripts" / "v63_mac_scene_renderer.py").resolve()
+    for required in (template, renderer):
+        if not required.is_file():
+            raise FileNotFoundError(required)
+    deck_meta = {
+        "schema_version": "6.3",
+        "pipeline_revision": PIPELINE_REVISION,
+        "deconstruction_runtime_revision": "6.3.1",
+        "construction_mode": "deconstruct",
+        "builder_backend": BUILDER_BACKEND,
+        "page_count": len(expected),
+        "template_path": str(template),
+        "template_sha256": sha256_file(template),
+        "scene_graph_sha256": sha256_file(project / ".build/v63_scene_graph.json"),
+        "asset_ledger_sha256": sha256_file(project / ".build/v63_asset_ledger.json"),
+        "mac_native_render_unverified": True,
+    }
+    source = f'''from __future__ import annotations
+
+import argparse
+import importlib.util
+from pathlib import Path
+
+DECK_META = {_literal(deck_meta)}
+SLIDES = {_literal(slides)}
+SCENE_GRAPH = {_literal(scene)}
+ASSET_LEDGER = {_literal(ledger)}
+RENDERER_PATH = Path({_literal(str(renderer))})
+TEMPLATE_PATH = Path({_literal(str(template))})
+
+
+def _renderer():
+    spec = importlib.util.spec_from_file_location("standard_report_v63_compiled_mac_renderer", RENDERER_PATH)
+    module = importlib.util.module_from_spec(spec)
+    if spec.loader is None:
+        raise RuntimeError("MAC_RECONSTRUCTION_UNSUPPORTED: V6.3 renderer unavailable")
+    spec.loader.exec_module(module)
+    return module
+
+
+def build_deck(output_path=None, *, font_catalog=None):
+    project_dir = Path(__file__).resolve().parent
+    output = Path(output_path) if output_path else project_dir / "output" / "report.pptx"
+    return _renderer().build_deck(project_dir, output, template_path=TEMPLATE_PATH)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Build a V6.3 shared-scene Mac deck")
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
+    print(build_deck(args.output))
+
+
+if __name__ == "__main__":
+    main()
+'''
+    destination = project / "generate_deck.py"
+    temporary = destination.with_suffix(".py.tmp")
+    compile(source, str(destination), "exec")
+    temporary.write_text(source, encoding="utf-8")
+    temporary.replace(destination)
+    report = {
+        **deck_meta,
+        "generator": destination.name,
+        "generator_sha256": sha256_file(destination),
+        "pages": len(expected),
+        "assets": len(ledger.get("assets", [])),
+    }
+    (project / ".build" / "compile_report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return destination
+
+
 def compile_project(project_dir: str | Path) -> Path:
     project = Path(project_dir).resolve()
     skill = Path(__file__).resolve().parents[1]
@@ -465,6 +579,8 @@ def compile_project(project_dir: str | Path) -> Path:
             f"{ERROR_UNSUPPORTED}: Mac v2 compiler requires V6.0.0 blueprint construction"
         )
     mode = str(brief["construction_mode"])
+    if mode == "deconstruct" and (project / ".build" / "v63_scene_graph.json").is_file():
+        return _compile_v63_mac_project(project, brief)
     slides = _required_payload(project, ".build/slides.json")
     if not isinstance(slides, list):
         raise ValueError("slides.json must contain a list")

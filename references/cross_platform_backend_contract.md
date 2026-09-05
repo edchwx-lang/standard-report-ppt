@@ -1,5 +1,29 @@
 # V6.0 Cross-Platform Backend Contract
 
+## V6.3 post-lock deconstruction overlay
+
+Repair runtime `6.3.1` follows `v63_visual_repair.md`. Source ROI is observed
+from the blueprint, not inferred from the master. Both backends share one contain
+transform, open-path geometry and hash-bound cleaned local PNGs. Explicit text
+margins use points. Windows opt-in text fit measures once; Mac records Office
+text-to-fit intent only, never a native-render pass. Legacy and bitmap mappings
+remain unchanged.
+
+V6.3 begins only after immutable formal blueprint locking and only for
+`construction_mode: deconstruct`. Pre-blueprint behavior and bitmap construction
+remain unchanged. Windows and macOS consume the same hash-bound
+`.build/v63_visual_census.json`, `.build/v63_scene_graph.json`, and
+`.build/v63_asset_ledger.json`.
+
+The five template placeholders remain master-owned and receive text-only updates.
+The blueprint body is the visual authority. Text, numbers, tables, charts, and
+basic geometry compile to editable atoms; only tight local photos, complex logos,
+maps, illustrations, and complex icons compile to pictures. Windows maps atoms
+through PowerPoint COM. macOS maps the same atoms through python-pptx/OOXML and
+must report `MAC_RECONSTRUCTION_UNSUPPORTED` instead of rasterizing unsupported
+editable content. Mac reports always include `mac_native_render_unverified`; no
+native Mac visual parity is claimed by Windows tests.
+
 V6 keeps source ingestion, canonical authoring, ImageGen prompting, one successful
 artifact per page, the single no-artifact transport retry, and immutable formal
 blueprint locking unchanged. After locking, `construction_mode` selects
